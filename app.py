@@ -9,40 +9,32 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Mantendo a sobriedade e o glossário limpo
+# Estilos CSS
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
-    .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.5; }
-    .instrucoes { font-size: 0.85rem; color: #444; background-color: #f0f2f6; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #d1d9e6; }
-    
-    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
+    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 10px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
-
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
-    .glossario-item { margin-bottom: 15px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
-    .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; }
-
-    .creditos { font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px; }
-    .creditos a { color: #1f77b4; text-decoration: none; font-weight: bold; }
+    .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
 def formata_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# TÍTULOS LIMPOS
+# TÍTULOS SEM EMOJIS
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL - RESTAURANDO TEXTO COMPLETO
+# 2. BARRA LATERAL - BEM-VINDO CIRÚRGICO
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
-👋 <b>Bem-vindo!</b><br><br>
-O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo de forma profissional. O simulador calcula o acúmulo real considerando o reinvestimento de <b>Proventos (Dividendos e JCP)</b>.<br><br>
-Nosso algoritmo utiliza o ajuste de preço histórico para neutralizar distorções de mercado e eventos acionários, permitindo uma simulação fiel do crescimento patrimonial ao longo do tempo.
+👋 <b>Bem-vindo!</b><br>
+O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP). Para garantir precisão técnica, utilizamos um algoritmo de ajuste histórico que neutraliza distorções causadas por compras, divisões (splits), grupamentos e bonificações, permitindo uma análise fiel da evolução do seu capital.
 </div>
 """, unsafe_allow_html=True)
 
@@ -63,16 +55,15 @@ mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
 st.sidebar.markdown(f"""
-<div class="creditos">
+<div style="font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
 Desenvolvido por: <br>
-<a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank">IG: Ramoon.Bastos</a>
+<a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank" style="color: #1f77b4; text-decoration: none; font-weight: bold;">IG: Ramoon.Bastos</a>
 </div>
 """, unsafe_allow_html=True)
 
-# 3. FUNÇÕES DE SUPORTE
+# 3. FUNÇÕES DE SUPORTE (CDI ROBUSTO)
 def busca_indice_bcb(codigo, d_inicio, d_fim):
-    s = d_inicio.strftime('%d/%m/%Y')
-    e = d_fim.strftime('%d/%m/%Y')
+    s, e = d_inicio.strftime('%d/%m/%Y'), d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
     for i in range(5):
         try:
@@ -95,7 +86,6 @@ def carregar_dados_completos(t):
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
-        # Ajuste para splits/grupamentos já é intrínseco no Adj Close do Yahoo, mas garantimos a lógica:
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
@@ -119,37 +109,31 @@ if ticker_input:
 
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
-        
         if not df_v.empty:
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
             df_v["Price_Base_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
-            if not s_cdi.empty:
-                fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
-            if not s_ipca.empty:
-                fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
-            if not df_ibov_c.empty:
-                fig.add_trace(go.Scatter(x=df_ibov_c.index, y=(df_ibov_c/df_ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
-
+            if not s_cdi.empty: fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
+            if not s_ipca.empty: fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
+            if not df_ibov_c.empty: fig.add_trace(go.Scatter(x=df_ibov_c.index, y=(df_ibov_c/df_ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
-
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Simulação de Patrimônio Acumulado")
             
-            # CORREÇÃO DA LÓGICA DE MESES (Limitando a exatamente 12, 60 ou 120 aportes)
+            # LOGICA DE MESES CORRIGIDA (EVITA ATTRIBUTE ERROR)
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
-                data_limite = datetime.now() - timedelta(days=anos*365 + 10)
+                data_limite = datetime.now() - timedelta(days=anos*365 + 15)
                 df_p = df_full[df_full.index >= data_limite].copy()
-                if len(df_p) < 10: return [0]*6
+                if len(df_p) < 5: return [0]*6
                 
                 df_p['month'] = df_p.index.to_period('M')
-                # Pega a primeira data disponível de cada mês e limita ao número exato de meses (ex: 12 para 1 ano)
-                datas = df_p.groupby('month').head(1).index.tail(anos * 12)
+                meses_idx = df_p.groupby('month').head(1).index.tolist()
+                datas = meses_idx[-(anos * 12):] # Pega exatamente os últimos N meses
                 
                 cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
                 fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
@@ -181,34 +165,22 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
 
-            # GLOSSÁRIO COM AS DEFINIÇÕES REFINADAS
+            # GLOSSÁRIO REFINADO E BLINDADO
             st.markdown("""
 <div class="glossario-container">
 <h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
-<div class="glossario-item">
 <span class="glossario-termo">• CDI (Certificado de Depósito Interbancário)</span>
-<span class="glossario-def">Referência da renda fixa. Representa o retorno de aplicações seguras. Serve para avaliar se o risco da bolsa compensou.</span>
-</div>
-<div class="glossario-item">
+<span class="glossario-def">Referência da renda fixa que representa o retorno de aplicações seguras (ex: Tesouro Selic). Serve para avaliar se o risco de investir em ações trouxe um prêmio sobre a taxa básica.</span>
 <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-<span class="glossario-def">Atualiza o dinheiro para o valor presente. Mostra quanto você precisa hoje para ter o mesmo poder de compra do passado.</span>
-</div>
-<div class="glossario-item">
+<span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Indica quanto você precisaria ter hoje para manter o mesmo patrimônio real do passado.</span>
 <span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">É o principal índice de desempenho das ações <b>mais negociadas</b> na bolsa brasileira. É utilizado como a principal referência para medir o comportamento do mercado geral.</span>
-</div>
-<div class="glossario-item">
+<span class="glossario-def">Principal índice da bolsa brasileira, composto pelas ações com maior volume de negociação. É utilizado como benchmark para medir se a ação escolhida está superando a média do mercado nacional.</span>
 <span class="glossario-termo">• Capital Nominal Investido</span>
-<span class="glossario-def">Soma bruta de todos os aportes mensais feitos, sem considerar juros ou correções.</span>
-</div>
-<div class="glossario-item">
+<span class="glossario-def">É o somatório bruto de todos os aportes mensais que saíram do seu bolso ao longo do tempo, sem considerar juros.</span>
 <span class="glossario-termo">• Lucro Acumulado</span>
-<span class="glossario-def">É o crescimento do capital <b>considerando o investimento feito na ação em questão</b>. É a diferença entre o patrimônio atual e o total investido nominalmente.</span>
-</div>
-<div class="glossario-item">
+<span class="glossario-def">Diferença entre o patrimônio atual e o capital nominal investido, especificamente para o investimento realizado nesta ação.</span>
 <span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica mais importante, pois combina a valorização do preço com o reinvestimento de todos os proventos recebidos. O cálculo também contempla eventos acionários como desdobramentos (splits), grupamentos e possíveis bonificações.</span>
-</div>
+<span class="glossario-def">Métrica definitiva que combina a valorização da cota com o reinvestimento de proventos. O cálculo neutraliza distorções causadas por compras, desdobramentos (splits), grupamentos e bonificações.</span>
 </div>""", unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
