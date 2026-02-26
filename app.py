@@ -21,8 +21,17 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL
+# 2. BARRA LATERAL COM INSTRUÇÕES RESTAURADAS
 st.sidebar.header("Guia de Uso")
+st.sidebar.markdown("""
+<div class="instrucoes">
+1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
+2) <b>Aporte:</b> Defina o valor mensal.<br>
+3) <b>Período:</b> O padrão inicia em 10 anos.<br>
+4) <b>Filtros:</b> Compare com índices abaixo.
+</div>
+""", unsafe_allow_html=True)
+
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
@@ -59,32 +68,20 @@ def carregar_dados_completos(t):
     if not t: return None
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        # AQUI ESTÁ O TRUQUE: yf.download em vez de yf.Ticker resolve o erro de ticker não encontrado
-        # Usamos auto_adjust=False para garantir que o Adj Close venha separado
         df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
-        
         if df.empty: return None
-        
-        # Limpeza de colunas multi-index que o Yahoo gera agora
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-            
         df.index = df.index.tz_localize(None)
 
-        # FISCALIZAÇÃO MATEMÁTICA (Anti-CSMG3)
-        # Retorno Total (Com dividendos e splits)
+        # FISCALIZAÇÃO MATEMÁTICA ANTI-ERRO (CSMG3)
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
-        # Retorno de Preço (Só tela)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
-        # Extraímos o Yield Real (Diferença que não é variação de preço)
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
-
-        # Fator Acumulado Blindado
         df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
         
         return df[['Close', 'Adj Close', 'Total_Fact']]
-    except Exception as e:
-        return None
+    except: return None
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
@@ -123,30 +120,45 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO
+            # 5. CARDS DE PATRIMÔNIO (CÁLCULO DE LUCRO LÍQUIDO)
             st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
             def calcular_patrimonio(df_full, valor_mensal, anos):
                 n_meses = anos * 12
                 df_calc = df_full.tail(n_meses * 22)
-                if len(df_calc) < 20: return 0, 0
+                if len(df_calc) < 20: return 0, 0, 0
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
                 total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
                 fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
-                valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
-                return valor_final, n_meses * valor_mensal
+                valor_final_bruto = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                
+                investido = n_meses * valor_mensal
+                lucro_bruto = valor_final_bruto - investido
+                # Aplicando 15% de IR sobre o lucro (Simplificação de Swing Trade)
+                lucro_liquido = lucro_bruto * 0.85 if lucro_bruto > 0 else lucro_bruto
+                valor_final_liquido = investido + lucro_liquido
+                
+                return valor_final_liquido, investido, lucro_liquido
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                vf, vi = calcular_patrimonio(df_acao, valor_aporte, anos)
+                v_liq, vi, l_liq = calcular_patrimonio(df_acao, valor_aporte, anos)
                 with col:
-                    if vf > 0:
-                        st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
-                        st.write(f"Investido: {formata_br(vi)}")
-                        st.caption(f"Lucro Bruto: {formata_br(vf-vi)}")
+                    if v_liq > 0:
+                        st.metric(f"Acúmulo em {years if 'years' in locals() else anos} anos", formata_br(v_liq))
+                        st.write(f"Total Investido: {formata_br(vi)}")
+                        st.caption(f"Lucro Líquido (estimado): {formata_br(l_liq)}")
 
-            st.markdown("""<div class="glossario">📌 <b>Comparativos:</b> O gráfico separa valorização de tela de proventos reinvestidos. O cálculo ignora distorções de splits históricos.</div>""", unsafe_allow_html=True)
+            # 6. GLOSSÁRIO DETALHADO RESTAURADO
+            st.markdown("""
+            <div class="glossario">
+            📌 <b>Entenda os indicadores de comparação:</b><br><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> É o principal termômetro da Renda Fixa no Brasil. Ele caminha muito próximo à taxa Selic. Se a sua ação rende menos que o CDI, significa que teria sido mais vantajoso (e seguro) deixar o dinheiro em uma conta digital ou Tesouro Selic.<br><br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É o indicador oficial da inflação. Ele mostra o quanto o custo de vida aumentou. O rendimento que ultrapassa o IPCA é chamado de "Lucro Real" (ganho de poder de compra).<br><br>
+            • <b>Ibovespa (Mercado):</b> É a carteira teórica das ações mais negociadas na bolsa brasileira (B3). Ele serve para você entender se a empresa escolhida performou melhor ou pior do que a média de mercado.
+            </div>
+            """, unsafe_allow_html=True)
             
-    else: st.error("Erro: Ticker não encontrado ou falha na conexão com o Yahoo.")
+    else: st.error("Erro: Ticker não encontrado ou falha na conexão.")
 else: st.info("💡 Digite um Ticker para começar.")
