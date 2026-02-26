@@ -1,6 +1,6 @@
 import streamlit as st
 import yfinance as yf
-import pd as pd
+import pandas as pd  # Corrigido aqui!
 import requests
 import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
@@ -9,7 +9,7 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Organizados para evitar conflitos de renderização
+# Estilos CSS - Refinados para o Glossário não quebrar
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
@@ -21,11 +21,11 @@ st.markdown("""
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 
-    /* Estilo do Glossário para evitar que pareça código */
-    .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; color: #1e293b !important; }
-    .glossario-item { margin-bottom: 15px; display: block; }
-    .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; margin-bottom: 2px; }
-    .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; }
+    /* Glossário Estilizado */
+    .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
+    .glossario-item { margin-bottom: 15px; }
+    .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
+    .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; }
 
     .creditos { font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px; }
     .creditos a { color: #1f77b4; text-decoration: none; font-weight: bold; }
@@ -35,24 +35,14 @@ st.markdown("""
 def formata_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# TÍTULO SEM EMOJI
+# TÍTULOS SEM EMOJIS
 st.title("Simulador de Acúmulo de Patrimônio")
 
 # 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
-O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de mercado para uma simulação fiel.
-</div>
-""", unsafe_allow_html=True)
-
-st.sidebar.markdown("""
-<div class="instrucoes">
-<b>Como usar:</b><br>
-1. Digite o <b>Ticker</b> (ex: BBAS3).<br>
-2. Defina o <b>valor mensal</b> do aporte.<br>
-3. Escolha o <b>período</b> desejado.<br>
-4. Clique em <b>Analisar</b>.
+O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>.
 </div>
 """, unsafe_allow_html=True)
 
@@ -79,23 +69,24 @@ Desenvolvido por: <br>
 </div>
 """, unsafe_allow_html=True)
 
-# 3. FUNÇÕES DE SUPORTE (COM RETRY PARA O CDI)
+# 3. FUNÇÕES DE SUPORTE (CDI ROBUSTO)
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s = d_inicio.strftime('%d/%m/%Y')
     e = d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
     
-    for _ in range(3): # Tenta até 3 vezes caso a API falhe
+    # Tenta até 5 vezes com espera progressiva
+    for i in range(5):
         try:
-            r = requests.get(url, timeout=20).json()
-            df = pd.DataFrame(r)
-            df['data'] = pd.to_datetime(df['data'], dayfirst=True)
-            df['valor'] = pd.to_numeric(df['valor']) / 100
-            df = df.set_index('data')
-            return (1 + df['valor']).cumprod()
+            r = requests.get(url, timeout=30)
+            if r.status_code == 200:
+                df = pd.DataFrame(r.json())
+                df['data'] = pd.to_datetime(df['data'], dayfirst=True)
+                df['valor'] = pd.to_numeric(df['valor']) / 100
+                df = df.set_index('data')
+                return (1 + df['valor']).cumprod()
         except:
-            time.sleep(1) # Aguarda 1 segundo antes de tentar de novo
-            continue
+            time.sleep(i + 1)
     return pd.Series(dtype='float64')
 
 @st.cache_data(show_spinner=False)
@@ -116,7 +107,7 @@ def carregar_dados_completos(t):
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
-    with st.spinner("Sincronizando dados de mercado..."):
+    with st.spinner("Carregando dados de mercado de forma segura..."):
         s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
         df_acao = carregar_dados_completos(ticker_input)
@@ -144,13 +135,13 @@ if ticker_input:
                 fig.add_trace(go.Scatter(x=df_ibov_c.index, y=(df_ibov_c/df_ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
 
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos (Div/JCP)', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # SUBHEADER SEM EMOJI
+            # TÍTULO SEM EMOJI
             st.subheader("Simulação de Patrimônio Acumulado")
             
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
@@ -179,7 +170,7 @@ if ticker_input:
                         st.metric(titulo_col, formata_br(vf))
                         st.markdown(f"""
                         <div class="info-card">
-                            <div class="card-header">🏛️ Benchmarks (Valor Corrigido)</div>
+                            <div class="card-header">Benchmarks (Valor Corrigido)</div>
                             <div class="card-item">🎯 <b>CDI:</b> {formata_br(v_cdi)}</div>
                             <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
                             <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
@@ -190,44 +181,35 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
 
-            # GLOSSÁRIO COM HTML "BLINDADO" (Sem espaços no início das linhas para não virar código)
-            glossario_html = """
+            # GLOSSÁRIO BLINDADO (Sem espaços no início das linhas para não virar código)
+            st.markdown("""
 <div class="glossario-container">
 <h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
 <div class="glossario-item">
 <span class="glossario-termo">• CDI (Certificado de Depósito Interbancário)</span>
-<span class="glossario-def">É a principal referência da renda fixa. Representa o retorno de aplicações seguras como o Tesouro Selic. Serve para avaliar se o risco da bolsa valeu a pena.</span>
+<span class="glossario-def">Referência da renda fixa. Representa o retorno de aplicações seguras. Serve para avaliar se o risco da bolsa compensou.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-<span class="glossario-def">Representa a atualização do seu dinheiro para o valor presente. Indica quanto você precisaria ter hoje para manter o mesmo poder de compra que tinha no passado.</span>
+<span class="glossario-def">Atualiza o dinheiro para o valor presente. Mostra quanto você precisa hoje para ter o mesmo poder de compra do passado.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">É o termômetro do mercado brasileiro. Reflete a média de desempenho das maiores empresas da bolsa.</span>
+<span class="glossario-def">Média de desempenho das maiores empresas da bolsa brasileira.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Capital Nominal Investido</span>
-<span class="glossario-def">É a soma bruta de todos os aportes mensais que saíram do seu bolso, sem considerar juros ou correções.</span>
+<span class="glossario-def">Soma de todos os aportes mensais feitos, sem contar juros.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Lucro Acumulado</span>
-<span class="glossario-def">É o crescimento do seu capital: a diferença entre o patrimônio total hoje e o total investido nominalmente.</span>
+<span class="glossario-def">Crescimento real: Patrimônio atual menos o capital investido nominalmente.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica que combina a valorização do preço da ação com o reinvestimento automático de todos os proventos recebidos.</span>
+<span class="glossario-def">Métrica real que soma valorização do preço e reinvestimento de proventos.</span>
 </div>
-<div class="glossario-item">
-<span class="glossario-termo">• Valorização</span>
-<span class="glossario-def">Refere-se apenas à mudança no preço da cota na bolsa, sem contar a renda passiva.</span>
-</div>
-<div class="glossario-item">
-<span class="glossario-termo">• Proventos (Div/JCP)</span>
-<span class="glossario-def">É o lucro da empresa distribuído aos acionistas. O simulador assume que você comprou mais ações com esses valores.</span>
-</div>
-</div>"""
-            st.markdown(glossario_html, unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
-else: st.info("💡 Digite um Ticker no menu lateral para iniciar a análise.")
+else: st.info("💡 Digite um Ticker no menu lateral para iniciar.")
