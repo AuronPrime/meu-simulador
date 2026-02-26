@@ -74,21 +74,21 @@ def carregar_dados_completos(t):
             df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
 
+        # FISCALIZAÇÃO MATEMÁTICA ANTI-ERRO (Proteção contra Splits/Grupamentos)
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
+        # Yield Real Extraído (Dividendos, JCP, Proventos em geral)
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
+        # Fator Acumulado Blindado
         df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
         
         return df[['Close', 'Adj Close', 'Total_Fact']]
     except: return None
 
-# 4. LOGICA PRINCIPAL (CARREGAMENTO RÁPIDO)
+# 4. LOGICA PRINCIPAL
 if ticker_input:
-    # Um único spinner para todo o processo de dados
     with st.spinner(f"Sincronizando {ticker_input} e indicadores..."):
         df_acao = carregar_dados_completos(ticker_input)
-        
-        # Pré-carregamento dos comparativos para evitar "pulos" na tela
         s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
         df_ibov = pd.Series()
@@ -100,7 +100,6 @@ if ticker_input:
                     df_ibov = ibov_raw['Close']
             except: pass
 
-    # Se chegamos aqui, os dados já estão no PC. Agora desenhamos tudo de uma vez.
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
@@ -110,24 +109,22 @@ if ticker_input:
             
             fig = go.Figure()
 
-            # Desenho das linhas de referência (CDI, IPCA, IBOV)
             if mostrar_cdi and not s_cdi.empty:
                 fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
-
             if mostrar_ipca and not s_ipca.empty:
                 fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
-
             if mostrar_ibov and not df_ibov.empty:
                 fig.add_trace(go.Scatter(x=df_ibov.index, y=(df_ibov/df_ibov.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
 
-            # Desenho da Ação (Áreas e Linha Principal)
+            # Áreas do Gráfico (Valorização e Proventos)
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            
+            # TROCA DE "DIVIDENDOS" PARA "PROVENTOS (DIVIDENDOS/JCP)"
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos (Div/JCP)', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-            
-            # Renderização final
             st.plotly_chart(fig, use_container_width=True)
 
             # 5. CARDS DE PATRIMÔNIO
@@ -158,9 +155,10 @@ if ticker_input:
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores de comparação:</b><br><br>
-            • <b>CDI (Certificado de Depósito Interbancário):</b> Referência de Renda Fixa.<br><br>
-            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> Inflação oficial.<br><br>
-            • <b>Ibovespa (Mercado):</b> Média das ações mais negociadas.
+            • <b>Proventos (Div/JCP):</b> Representa a soma de Dividendos, Juros sobre Capital Próprio e outras distribuições em dinheiro reinvestidas no ativo.<br><br>
+            • <b>CDI:</b> Referência de Renda Fixa (Taxa Selic).<br><br>
+            • <b>IPCA:</b> Inflação oficial (Poder de Compra).<br><br>
+            • <b>Ibovespa:</b> Desempenho médio das maiores empresas da bolsa.
             </div>
             """, unsafe_allow_html=True)
             
