@@ -19,27 +19,17 @@ def formata_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
-st.markdown("Compare ações com Dividendos, IBOV, CDI e Inflação.")
+st.markdown("Compare o impacto dos aportes e dividendos contra os principais índices.")
 
 # 2. BARRA LATERAL
 st.sidebar.header("Configurações")
 
-st.sidebar.markdown("""
-<div class="instrucoes">
-<b>Como usar:</b><br>
-1. Digite o ticker e o aporte.<br>
-2. Ajuste o período de análise.<br>
-3. Clique em <b>Analisar Patrimônio</b>.
-</div>
-""", unsafe_allow_html=True)
-
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, WEGE3)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Valor do aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-st.sidebar.subheader("Período da Análise")
+st.sidebar.subheader("Período do Gráfico")
 d_ini_padrao = date(2010, 1, 1)
-d_fim_padrao = date.today() - timedelta(days=2) # 2 dias para garantir dados fechados
-
+d_fim_padrao = date.today() - timedelta(days=2) 
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
@@ -66,12 +56,10 @@ def get_bcb(codigo, d_ini, d_f, fallback):
 def carregar_tudo(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        # Tenta buscar dados da ação
         ticker_obj = yf.Ticker(t_sa)
-        df_hist = ticker_obj.history(start=d_ini, end=d_fim)
+        df_hist = ticker_obj.history(start="2005-01-01") # Puxa mais para garantir janelas de 10 anos
         
-        if df_hist.empty:
-            return None
+        if df_hist.empty: return None
             
         df = df_hist[['Close']].copy()
         df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
@@ -83,17 +71,15 @@ def carregar_tudo(t, d_ini, d_fim):
         df["Total_Pct"] = df["Total_Fact"] - 1
         df["Div_Pct"] = df["Total_Pct"] - df["Price_Pct"]
         
-        # Busca Ibovespa separadamente
+        # Benchmarks
         try:
-            ibov = yf.download("^BVSP", start=d_ini, end=d_fim, progress=False)
+            ibov = yf.download("^BVSP", start="2005-01-01", progress=False)
             if not ibov.empty:
                 ibov_c = ibov['Close'].copy()
                 ibov_c.index = ibov_c.index.tz_localize(None)
                 df["IBOV_Acum"] = (ibov_c / ibov_c.iloc[0]).reindex(df.index).ffill() - 1
-        except:
-            pass # Se o Ibov falhar, o gráfico continua sem ele
+        except: pass
             
-        # Benchmarks BCB
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
         df_ipca = get_bcb(433, s, e, 0.004)
         ipca_f = df_ipca.reindex(pd.date_range(df.index[0], df.index[-1]), method='ffill')
@@ -105,49 +91,71 @@ def carregar_tudo(t, d_ini, d_fim):
         df["CDI_Acum"] = (1 + cdi_f['valor']).cumprod().reindex(df.index).ffill() - 1
         
         return df
-    except:
-        return None
+    except: return None
 
-# 4. EXIBIÇÃO
+# 4. LÓGICA DE EXIBIÇÃO
 if not ticker_input:
     st.info("💡 Digite um **Ticker** e clique em **Analisar Patrimônio**.")
-elif btn_analisar:
-    df = carregar_tudo(ticker_input, data_inicio, data_fim)
-    if df is not None:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df["Price_Pct"]*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.5)', line=dict(width=0)))
-        fig.add_trace(go.Scatter(x=df.index, y=df["Div_Pct"]*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+elif btn_analisar or ticker_input:
+    df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
+    if df_completo is not None:
+        # Filtra o DF para o gráfico conforme as datas da barra lateral
+        df_grafico = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
-        if mostrar_ipca:
-            fig.add_trace(go.Scatter(x=df.index, y=df["IPCA_Acum"]*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
-        if mostrar_cdi:
-            fig.add_trace(go.Scatter(x=df.index, y=df["CDI_Acum"]*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
-        if mostrar_ibov and "IBOV_Acum" in df.columns:
-            fig.add_trace(go.Scatter(x=df.index, y=df["IBOV_Acum"]*100, name='Ibovespa', line=dict(color='orange', width=2)))
+        if not df_grafico.empty:
+            # Gráfico de Performance
+            fig = go.Figure()
+            # Ajuste de escala para o período visível
+            df_v = df_grafico.copy()
+            for col in ["Total_Fact", "IPCA_Fator"]: 
+                df_v[col] = df_v[col] / df_v[col].iloc[0]
             
-        fig.add_trace(go.Scatter(x=df.index, y=df["Total_Pct"]*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
-        fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-        st.plotly_chart(fig, use_container_width=True)
+            fig.add_trace(go.Scatter(x=df_v.index, y=((df_v["Close"]/df_v["Close"].iloc[0])-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-(df_v["Close"]/df_v["Close"].iloc[0]))*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            
+            if mostrar_ipca:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IPCA_Fator"]-1)*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
+            if mostrar_cdi:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["CDI_Acum"]-df_v["CDI_Acum"].iloc[0])*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
+            if mostrar_ibov and "IBOV_Acum" in df_v.columns:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Acum"]-df_v["IBOV_Acum"].iloc[0])*100, name='Ibovespa', line=dict(color='orange', width=2)))
+            
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
+            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+            st.plotly_chart(fig, use_container_width=True)
 
-        # 5. RESULTADOS
-        st.subheader(f"💰 Simulação de Aportes ({data_inicio.strftime('%d/%m/%Y')} - {data_fim.strftime('%d/%m/%Y')})")
-        
-        df_sim = df.copy()
-        df_sim['m'] = df_sim.index.to_period('M')
-        datas_aporte = df_sim.groupby('m').head(1).index
-        if len(datas_aporte) >= 2:
-            cotas = sum(valor_aporte / df.loc[d, 'Close'] for d in datas_aporte)
-            f_total = df["Total_Fact"].iloc[-1] / df["Total_Fact"].iloc[0]
-            f_preco = df["Close"].iloc[-1] / df["Close"].iloc[0]
-            v_final = cotas * df["Close"].iloc[-1] * (f_total/f_preco)
-            v_nom = len(datas_aporte) * valor_aporte
-            l_real = v_final - sum(valor_aporte * (df['IPCA_Fator'].iloc[-1] / df.loc[d, 'IPCA_Fator']) for d in datas_aporte)
+            # 5. CARDS DE RESULTADO (O que você queria de volta)
+            st.subheader(f"💰 Resultado com Aportes Mensais de {formata_br(valor_aporte)}")
             
-            c1, c2, c3 = st.columns(3)
-            with c1: st.metric("Patrimônio Acumulado", formata_br(v_final))
-            with c2: st.write(f"**Total Investido:** {formata_br(v_nom)}")
-            with c3: 
-                st.caption(f"📉 **Lucro Líquido Real:** {formata_br(l_real)}")
-                st.caption("(Descontada a inflação)")
+            def simular_historico(df_orig, v_mes, anos):
+                n_meses = anos * 12
+                df_rec = df_orig.tail(n_meses * 21) # Aproximação de dias úteis
+                df_rec['m'] = df_rec.index.to_period('M')
+                datas_aporte = df_rec.groupby('m').head(1).index[-n_meses:]
+                
+                if len(datas_aporte) < n_meses: return 0, 0, 0
+                
+                recorte = df_orig[df_orig.index >= datas_aporte[0]].copy()
+                cotas = sum(v_mes / recorte.loc[d, 'Close'] for d in datas_aporte)
+                f_total = recorte["Total_Fact"].iloc[-1] / recorte["Total_Fact"].iloc[0]
+                f_preco = recorte["Close"].iloc[-1] / recorte["Close"].iloc[0]
+                v_final = cotas * recorte["Close"].iloc[-1] * (f_total/f_preco)
+                v_investido = n_meses * v_mes
+                l_real = v_final - sum(v_mes * (recorte['IPCA_Fator'].iloc[-1] / recorte.loc[d, 'IPCA_Fator']) for d in datas_aporte)
+                
+                return v_final, v_investido, l_real
+
+            col1, col2, col3 = st.columns(3)
+            for anos, coluna in [(10, col1), (5, col2), (1, col3)]:
+                vf, vi, lr = simular_historico(df_completo, valor_aporte, anos)
+                with coluna:
+                    if vf > 0:
+                        st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
+                        st.write(f"**Investido:** {formata_br(vi)}")
+                        st.caption(f"📉 **Lucro Líquido Real:** {formata_br(lr)}")
+                    else:
+                        st.warning(f"Sem dados para {anos} anos.")
+        else:
+            st.error("O período selecionado não possui dados para esta ação.")
     else:
-        st.error(f"Erro ao buscar '{ticker_input}'. Verifique o código e tente datas mais antigas.")
+        st.error(f"Erro ao carregar ticker {ticker_input}. Verifique o código.")
