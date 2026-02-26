@@ -27,7 +27,11 @@ st.markdown("""
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1f2937; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #166534; margin-top: 8px; border-top: 1px solid #ddd; padding-top: 8px; }
     
-    .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 10px; line-height: 1.6; }
+    .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 25px; border-radius: 10px; line-height: 1.6; }
+    .glossario-titulo { font-size: 1.1rem; font-weight: 700; color: #1f77b4; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1px; }
+    .glossario-item { margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+    .glossario-item b { color: #2d3748; }
+
     .creditos { font-size: 0.8rem; color: #777; margin-top: 15px; text-align: center; }
     .creditos a { color: #1f77b4; text-decoration: none; font-weight: bold; }
     </style>
@@ -38,11 +42,11 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL (BOAS-VINDAS, OBJETIVO E INSTRUÇÕES)
+# 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
-O objetivo desta ferramenta é analisar o <b>Total Return</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de splits e bonificações para uma simulação fiel.
+O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de splits e bonificações para uma simulação fiel.
 </div>
 """, unsafe_allow_html=True)
 
@@ -72,7 +76,6 @@ mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
-# CRÉDITOS COM HIPERLINK
 st.sidebar.markdown("""
 <div class="creditos">
 Desenvolvido por: <br>
@@ -175,9 +178,9 @@ if ticker_input:
                         st.markdown(f"""
                         <div class="info-card">
                             <div class="card-header">🏛️ Benchmarks (Alvos Corrigidos)</div>
-                            <div class="card-item">🎯 <b>CDI (Renda Fixa):</b> {formata_br(v_cdi)}</div>
-                            <div class="card-item">📈 <b>Ibovespa (Mercado):</b> {formata_br(v_ibov)}</div>
-                            <div class="card-item">🛡️ <b>Correção IPCA (Inflação):</b> {formata_br(v_ipca)}</div>
+                            <div class="card-item">🎯 <b>CDI:</b> {formata_br(v_cdi)}</div>
+                            <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
+                            <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
                             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
                             <div class="card-header">Análise da Carteira</div>
                             <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
@@ -185,12 +188,42 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
 
-            # 6. GLOSSÁRIO DIDÁTICO
+            # 6. SUPER GLOSSÁRIO DO INVESTIDOR
             st.markdown("""
             <div class="glossario">
-                📌 <b>Correção IPCA (Poder de Compra):</b> Este valor representa o seu capital passado atualizado para o <b>valor presente</b>. Ele mostra quanto dinheiro você precisaria ter hoje para comprar as mesmas coisas que comprava na época de cada aporte. Se o seu patrimônio final for maior que este valor, você aumentou seu padrão de vida real.<br><br>
-                📌 <b>Proventos (Div/JCP):</b> Representa o reinvestimento total de Dividendos e Juros Sobre Capital Próprio no ativo, potencializando o acúmulo de cotas.<br><br>
-                📌 <b>Capital Nominal Investido:</b> É a soma "seca" de todos os boletos e aportes que você pagou, sem considerar juros ou inflação.
+                <div class="glossario-titulo">📖 Glossário do Investidor</div>
+                
+                <div class="glossario-item">
+                    <b>• CDI (Certificado de Depósito Interbancário):</b> É a principal referência da Renda Fixa. Ele representa o rendimento que você teria se deixasse seu dinheiro em uma aplicação conservadora (como um Tesouro Selic ou CDB de banco). Serve para você saber se o risco da Bolsa valeu a pena.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Correção IPCA (Inflação):</b> É o seu "poder de compra". Este valor traz o seu investimento do passado para o dinheiro de hoje. Ele mostra quanto você precisaria ter agora para comprar as mesmas coisas que comprava na época dos aportes. É o alvo número 1 de qualquer investidor: ganhar da inflação.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Ibovespa:</b> É o principal índice da Bolsa brasileira. Ele funciona como uma "média" do desempenho das maiores empresas do país. Comparar sua ação com o Ibovespa ajuda a entender se você escolheu uma empresa acima ou abaixo da média do mercado.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Capital Nominal Investido:</b> É o valor real que saiu do seu bolso. Se você aportou R$ 1.000 por mês durante um ano, o seu capital nominal é R$ 12.000, "frio", sem juros ou correções.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Lucro Acumulado:</b> É a diferença entre o que você tem hoje (Patrimônio Total) e o que você tirou do bolso (Capital Nominal). É o crescimento gerado pelo seu dinheiro trabalhando para você.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Retorno Total:</b> É a métrica mais importante. No gráfico, ela combina a subida do preço da ação com todos os dividendos que você recebeu e reinvestiu. É a visão completa do seu enriquecimento.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Valorização:</b> É apenas o crescimento do preço da "cota" na bolsa. Se você comprou por R$ 10 e hoje vale R$ 15, você teve 50% de valorização no preço.
+                </div>
+                
+                <div class="glossario-item">
+                    <b>• Proventos (Div/JCP):</b> É a sua "renda passiva". São os lucros que a empresa distribui aos acionistas em dinheiro (Dividendos ou Juros sobre Capital Próprio). O simulador assume que você usou esse dinheiro para comprar mais ações, acelerando o efeito bola de neve.
+                </div>
             </div>
             """, unsafe_allow_html=True)
             
