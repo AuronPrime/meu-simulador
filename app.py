@@ -1,6 +1,6 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd  # Corrigido aqui!
+import pandas as pd 
 import requests
 import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
@@ -9,7 +9,7 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Refinados para o Glossário não quebrar
+# Estilos CSS - Mantendo a sobriedade e o glossário limpo
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
@@ -21,7 +21,6 @@ st.markdown("""
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 
-    /* Glossário Estilizado */
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-item { margin-bottom: 15px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
@@ -35,14 +34,15 @@ st.markdown("""
 def formata_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# TÍTULOS SEM EMOJIS
+# TÍTULOS LIMPOS
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL
+# 2. BARRA LATERAL - RESTAURANDO TEXTO COMPLETO
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
-👋 <b>Bem-vindo!</b><br>
-O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>.
+👋 <b>Bem-vindo!</b><br><br>
+O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo de forma profissional. O simulador calcula o acúmulo real considerando o reinvestimento de <b>Proventos (Dividendos e JCP)</b>.<br><br>
+Nosso algoritmo utiliza o ajuste de preço histórico para neutralizar distorções de mercado e eventos acionários, permitindo uma simulação fiel do crescimento patrimonial ao longo do tempo.
 </div>
 """, unsafe_allow_html=True)
 
@@ -69,13 +69,11 @@ Desenvolvido por: <br>
 </div>
 """, unsafe_allow_html=True)
 
-# 3. FUNÇÕES DE SUPORTE (CDI ROBUSTO)
+# 3. FUNÇÕES DE SUPORTE
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s = d_inicio.strftime('%d/%m/%Y')
     e = d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
-    
-    # Tenta até 5 vezes com espera progressiva
     for i in range(5):
         try:
             r = requests.get(url, timeout=30)
@@ -85,8 +83,7 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
                 df['valor'] = pd.to_numeric(df['valor']) / 100
                 df = df.set_index('data')
                 return (1 + df['valor']).cumprod()
-        except:
-            time.sleep(i + 1)
+        except: time.sleep(i + 1)
     return pd.Series(dtype='float64')
 
 @st.cache_data(show_spinner=False)
@@ -98,6 +95,7 @@ def carregar_dados_completos(t):
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
+        # Ajuste para splits/grupamentos já é intrínseco no Adj Close do Yahoo, mas garantimos a lógica:
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
@@ -107,7 +105,7 @@ def carregar_dados_completos(t):
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
-    with st.spinner("Carregando dados de mercado de forma segura..."):
+    with st.spinner("Sincronizando dados de mercado..."):
         s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
         df_acao = carregar_dados_completos(ticker_input)
@@ -141,15 +139,17 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # TÍTULO SEM EMOJI
             st.subheader("Simulação de Patrimônio Acumulado")
             
+            # CORREÇÃO DA LÓGICA DE MESES (Limitando a exatamente 12, 60 ou 120 aportes)
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
-                data_limite = datetime.now() - timedelta(days=anos*365)
+                data_limite = datetime.now() - timedelta(days=anos*365 + 10)
                 df_p = df_full[df_full.index >= data_limite].copy()
                 if len(df_p) < 10: return [0]*6
+                
                 df_p['month'] = df_p.index.to_period('M')
-                datas = df_p.groupby('month').head(1).index
+                # Pega a primeira data disponível de cada mês e limita ao número exato de meses (ex: 12 para 1 ano)
+                datas = df_p.groupby('month').head(1).index.tail(anos * 12)
                 
                 cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
                 fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
@@ -164,7 +164,7 @@ if ticker_input:
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
                 vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
-                titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano" # FIX SINGULAR
+                titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
                     if vf > 0:
                         st.metric(titulo_col, formata_br(vf))
@@ -181,7 +181,7 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
 
-            # GLOSSÁRIO BLINDADO (Sem espaços no início das linhas para não virar código)
+            # GLOSSÁRIO COM AS DEFINIÇÕES REFINADAS
             st.markdown("""
 <div class="glossario-container">
 <h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
@@ -195,19 +195,19 @@ if ticker_input:
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">Média de desempenho das maiores empresas da bolsa brasileira.</span>
+<span class="glossario-def">É o principal índice de desempenho das ações <b>mais negociadas</b> na bolsa brasileira. É utilizado como a principal referência para medir o comportamento do mercado geral.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Capital Nominal Investido</span>
-<span class="glossario-def">Soma de todos os aportes mensais feitos, sem contar juros.</span>
+<span class="glossario-def">Soma bruta de todos os aportes mensais feitos, sem considerar juros ou correções.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Lucro Acumulado</span>
-<span class="glossario-def">Crescimento real: Patrimônio atual menos o capital investido nominalmente.</span>
+<span class="glossario-def">É o crescimento do capital <b>considerando o investimento feito na ação em questão</b>. É a diferença entre o patrimônio atual e o total investido nominalmente.</span>
 </div>
 <div class="glossario-item">
 <span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica real que soma valorização do preço e reinvestimento de proventos.</span>
+<span class="glossario-def">Métrica mais importante, pois combina a valorização do preço com o reinvestimento de todos os proventos recebidos. O cálculo também contempla eventos acionários como desdobramentos (splits), grupamentos e possíveis bonificações.</span>
 </div>
 </div>""", unsafe_allow_html=True)
             
