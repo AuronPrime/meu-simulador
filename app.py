@@ -4,12 +4,11 @@ import pandas as pd
 import requests
 import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
-import time
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Mantendo sua identidade visual original
+# Estilos CSS - Fiel à sua identidade visual
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
@@ -32,7 +31,7 @@ def formata_br(valor):
 
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL (Restaurada conforme imagem 5e6223.png)
+# 2. BARRA LATERAL (Texto conforme imagem 5e6223.png)
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
@@ -56,7 +55,6 @@ mostrar_cdi = st.sidebar.checkbox("CDI (Renda Fixa)", value=True)
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
-# Créditos restaurados
 st.sidebar.markdown(f"""
 <div style="font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
 Desenvolvido por: <br>
@@ -64,7 +62,7 @@ Desenvolvido por: <br>
 </div>
 """, unsafe_allow_html=True)
 
-# 3. FUNÇÕES DE SUPORTE
+# 3. FUNÇÕES DE DADOS
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s, e = d_inicio.strftime('%d/%m/%Y'), d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
@@ -77,23 +75,34 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
     except: return pd.DataFrame()
 
 @st.cache_data(show_spinner=False)
-def carregar_dados(t):
+def carregar_dados_totais(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
-    df = yf.download(t_sa, start="2000-01-01", progress=False, auto_adjust=False)
+    # Baixamos um pouco antes para ter base de cálculo de retorno
+    df = yf.download(t_sa, start=d_ini - timedelta(days=30), end=d_fim + timedelta(days=2), progress=False, auto_adjust=False)
     if df.empty: return None
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df.index = df.index.tz_localize(None)
     df["Total_Return_Factor"] = (1 + df["Adj Close"].pct_change().fillna(0)).cumprod()
-    return df[['Close', 'Adj Close', 'Total_Return_Factor']]
+    return df
 
-# 4. LÓGICA DE CÁLCULO
+@st.cache_data(show_spinner=False)
+def carregar_ibov(d_ini, d_fim):
+    df = yf.download("^BVSP", start=d_ini, end=d_fim, progress=False)
+    if df.empty: return pd.DataFrame()
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    df.index = df.index.tz_localize(None)
+    df["valor_norm"] = (1 + df["Close"].pct_change().fillna(0)).cumprod()
+    return df
+
+# 4. LÓGICA PRINCIPAL
 if ticker_input:
-    df_acao = carregar_dados(ticker_input)
+    df_acao = carregar_dados_totais(ticker_input, data_inicio, data_fim)
     df_cdi = busca_indice_bcb(12, data_inicio, data_fim)
     df_ipca = busca_indice_bcb(433, data_inicio, data_fim)
-    
+    df_ibov = carregar_ibov(data_inicio, data_fim)
+
     if df_acao is not None:
-        # Gráfico
+        # Gráfico principal
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         df_v["Ret_Total_Norm"] = (df_v["Total_Return_Factor"] / df_v["Total_Return_Factor"].iloc[0] - 1) * 100
         
@@ -103,49 +112,53 @@ if ticker_input:
 
         st.subheader("Simulação de Patrimônio Acumulado")
         
-        def simular(anos, d_inicio_sel, d_fim_sel):
-            dt_fim = pd.to_datetime(d_fim_sel)
-            dt_ini = dt_fim - timedelta(days=anos*365)
+        # FUNÇÃO QUE RESPEITA A DATA DE INÍCIO DO CALENDÁRIO
+        def calcular_patrimonio(anos_desejados):
+            dt_final = pd.to_datetime(data_fim)
+            dt_inicial_sim = dt_final - timedelta(days=anos_desejados * 365)
             
-            # Ajuste para garantir que estamos dentro da janela do calendário
-            if dt_ini < pd.to_datetime(d_inicio_sel): return None
+            # Se o período selecionado no calendário for menor que os anos do card, não calcula
+            if dt_inicial_sim < pd.to_datetime(data_inicio): return None
+
+            df_periodo = df_acao.loc[dt_inicial_sim:dt_final].copy()
+            df_periodo['month'] = df_periodo.index.to_period('M')
+            datas_aportes = df_periodo.groupby('month').head(1).index.tolist()
             
-            df_p = df_acao.loc[dt_ini:dt_fim].copy()
-            df_p['month'] = df_p.index.to_period('M')
-            datas_aportes = df_p.groupby('month').head(1).index.tolist()
-            
-            data_final = df_p.index[-1]
-            total_patrimonio = 0
+            # Ativo
+            vf_ativo = 0
             for d in datas_aportes:
-                crescimento = df_acao.loc[data_final, "Total_Return_Factor"] / df_acao.loc[d, "Total_Return_Factor"]
-                total_patrimonio += valor_aporte * crescimento
+                fator = df_acao.loc[df_periodo.index[-1], "Total_Return_Factor"] / df_acao.loc[d, "Total_Return_Factor"]
+                vf_ativo += valor_aporte * fator
             
             vi = len(datas_aportes) * valor_aporte
             
-            def calc_bench(df_b):
+            # Benchmarks
+            def calc_bench_sim(df_b, col='valor'):
                 if df_b.empty: return 0
-                idx_venda = df_b.index.get_indexer([data_final], method='pad')[0]
-                v_fim = (1 + df_b['valor']).cumprod().iloc[idx_venda]
+                idx_fim = df_b.index.get_indexer([dt_final], method='pad')[0]
+                # Se for IBOV usa valor_norm, se for CDI/IPCA usa cumprod do valor
+                serie = df_b[col] if col == 'valor_norm' else (1 + df_b[col]).cumprod()
+                v_fim = serie.iloc[idx_fim]
                 soma = 0
                 for d in datas_aportes:
-                    idx_compra = df_b.index.get_indexer([d], method='pad')[0]
-                    v_ini = (1 + df_b['valor']).cumprod().iloc[idx_compra]
-                    soma += valor_aporte * (v_fim / v_ini)
+                    idx_ini = df_b.index.get_indexer([d], method='pad')[0]
+                    soma += valor_aporte * (v_fim / serie.iloc[idx_ini])
                 return soma
 
-            return total_patrimonio, vi, calc_bench(df_cdi), calc_bench(df_ipca)
+            return vf_ativo, vi, calc_bench_sim(df_cdi), calc_bench_sim(df_ipca), calc_bench_sim(df_ibov, 'valor_norm')
 
         cols = st.columns(3)
         for i, anos in enumerate([10, 5, 1]):
-            res = simular(anos, data_inicio, data_fim)
+            res = calcular_patrimonio(anos)
             with cols[i]:
                 if res:
-                    vf, vi, v_cdi, v_ipca = res
+                    vf, vi, v_cdi, v_ipca, v_ibov = res
                     st.markdown(f'<div class="total-card"><div class="total-label">Total em {anos} anos</div><div class="total-amount">{formata_br(vf)}</div></div>', unsafe_allow_html=True)
                     st.markdown(f"""
                     <div class="info-card">
                         <div class="card-header">Benchmarks (Valor Corrigido)</div>
                         <div class="card-item">🎯 <b>CDI:</b> {formata_br(v_cdi)}</div>
+                        <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
                         <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
                         <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
                         <div class="card-header">Análise da Carteira</div>
@@ -153,9 +166,9 @@ if ticker_input:
                         <div class="card-destaque">💰 Lucro Acumulado: {formata_br(vf-vi)}</div>
                     </div>""", unsafe_allow_html=True)
                 else:
-                    st.info(f"Período de {anos} anos indisponível para o filtro atual.")
+                    st.info(f"Período de {anos} anos indisponível para o filtro de datas atual.")
 
-        # Glossário Restaurado (image_5ee943.png)
+        # GUIA DE TERMOS - Conforme imagem_5ee943.png
         st.markdown("""
         <div class="glossario-container">
             <h3 style="color: #1f77b4; margin-top:0;">📖 GUIA DE TERMOS E INDICADORES</h3>
@@ -177,3 +190,5 @@ if ticker_input:
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+    else: st.error("Ticker não encontrado ou sem dados para o período.")
