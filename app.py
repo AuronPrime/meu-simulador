@@ -13,19 +13,21 @@ st.markdown("""
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.4; }
     
-    /* Estilo dos Cards Cinzas para Infos Secundárias */
     .info-card {
-        background-color: #f8f9fb;
-        border: 1px solid #e9ecef;
-        padding: 15px;
-        border-radius: 10px;
-        margin-top: 10px;
+        background-color: #f1f3f6; 
+        border: 1px solid #d1d9e6; 
+        padding: 18px; 
+        border-radius: 12px; 
+        margin-top: 10px; 
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
     }
     
-    .comp-header { font-size: 0.8rem; font-weight: bold; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-    .comp-item { font-size: 0.85rem; color: #444; line-height: 1.5; }
-    .secundario-texto { font-size: 0.8rem; color: #777; margin-top: 5px; }
+    .card-header { font-size: 0.75rem; font-weight: 800; color: #4b5563; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
+    .card-item { font-size: 0.9rem; margin-bottom: 4px; color: #1f2937; }
+    .card-destaque { font-size: 0.95rem; font-weight: 700; color: #166534; margin-top: 8px; }
+    
     .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 10px; line-height: 1.6; }
+    .glossario-item { margin-bottom: 12px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -41,7 +43,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-ticker_input = st.sidebar.text_input("Digite o Ticker (ex: ITUB4, BBSE3)", "").upper().strip()
+ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período")
@@ -124,8 +126,8 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO (DESIGN CORPORATIVO)
-            st.subheader(f"💰 Projeção de Aportes Mensais ({formata_br(valor_aporte)})")
+            # 5. CARDS DE PATRIMÔNIO REESTRUTURADOS
+            st.subheader(f"💰 Simulação de Patrimônio (Aportes Mensais: {formata_br(valor_aporte)})")
             
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
                 n_meses = anos * 12
@@ -149,28 +151,31 @@ if ticker_input:
                     if vf > 0:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         
-                        # CAIXA CINZA COM BENCHMARKS E INFOS TÉCNICAS
                         st.markdown(f"""
                         <div class="info-card">
-                            <div class="comp-header">Benchmarks Comparativos</div>
-                            <div class="comp-item">🎯 <b>CDI (100%):</b> {formata_br(v_cdi)}</div>
-                            <div class="comp-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
-                            <div class="comp-item">🛡️ <b>Poder de Compra (IPCA):</b> {formata_br(v_ipca)}</div>
+                            <div class="card-header">🏛️ Benchmarks Comparativos</div>
+                            <div class="card-item">🎯 <b>CDI (100%):</b> {formata_br(v_cdi)}</div>
+                            <div class="card-item">📈 <b>Ibovespa (Bolsa):</b> {formata_br(v_ibov)}</div>
+                            <div class="card-item">🛡️ <b>Poder de Compra (IPCA):</b> {formata_br(v_ipca)}</div>
                             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
-                            <div class="comp-header">Resultado da Carteira</div>
-                            <div class="comp-item">💵 <b>Capital Investido:</b> {formata_br(vi)}</div>
-                            <div class="comp-item" style="color: #28a745;">💰 <b>Lucro Líquido:</b> {formata_br(lucro)}</div>
+                            <div class="card-header">Análise da Carteira</div>
+                            <div class="card-item">💵 <b>Capital Investido:</b> {formata_br(vi)}</div>
+                            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
                         </div>
                         """, unsafe_allow_html=True)
 
-            # 6. GLOSSÁRIO
+            # 6. GLOSSÁRIO DIDÁTICO
             st.markdown("""
             <div class="glossario">
-            📌 <b>Glossário de Indicadores:</b><br><br>
-            • <b>Proventos (Div/JCP):</b> Representa o fluxo de caixa distribuído aos acionistas (Dividendos e Juros Sobre Capital Próprio) integralmente reinvestidos no ativo.<br><br>
-            • <b>CDI:</b> Referência de custo de oportunidade do capital na Renda Fixa pós-fixada.<br><br>
-            • <b>IPCA:</b> Reflete a atualização monetária necessária para manter o poder de compra original dos aportes realizados.<br><br>
-            • <b>Ibovespa:</b> Índice de performance média do mercado acionário brasileiro.
+            <div class="glossario-item">
+                📌 <b>Poder de Compra (IPCA):</b> Pense neste valor como a sua "linha de empate". Ele mostra quanto dinheiro você precisaria ter hoje para comprar exatamente as mesmas coisas que comprava com os aportes feitos no passado. Se o patrimônio da sua ação é maior que este valor, você ficou "mais rico" de verdade; se for menor, você perdeu poder de compra para a inflação.
+            </div>
+            <div class="glossario-item">
+                📌 <b>Proventos (Div/JCP):</b> É a parte do lucro que a empresa mandou para sua conta (Dividendos e Juros sobre Capital Próprio). O simulador assume que você usou cada centavo desse dinheiro para comprar mais ações da própria empresa.
+            </div>
+            <div class="glossario-item">
+                📌 <b>CDI:</b> É o rendimento de referência da Renda Fixa. Serve para você avaliar se valeu a pena correr o risco da Bolsa de Valores ou se teria sido melhor deixar o dinheiro em uma aplicação conservadora.
+            </div>
             </div>
             """, unsafe_allow_html=True)
             
