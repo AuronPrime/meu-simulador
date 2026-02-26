@@ -9,15 +9,23 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS
+# Estilos CSS - Adicionado o .total-card para o destaque superior
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
-    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 10px; }
+    
+    /* Card de Destaque para o Valor Total */
+    .total-card { background-color: #ffffff; border: 2px solid #1f77b4; padding: 15px; border-radius: 12px; margin-bottom: 10px; text-align: center; box-shadow: 0 2px 4px rgba(31,119,180,0.1); }
+    .total-label { font-size: 0.8rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
+    .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
+
+    /* Cards de Detalhes */
+    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+    
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
@@ -27,7 +35,6 @@ st.markdown("""
 def formata_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# TÍTULOS SEM EMOJIS
 st.title("Simulador de Acúmulo de Patrimônio")
 
 # 2. BARRA LATERAL - BEM-VINDO CIRÚRGICO
@@ -61,7 +68,7 @@ Desenvolvido por: <br>
 </div>
 """, unsafe_allow_html=True)
 
-# 3. FUNÇÕES DE SUPORTE (CDI ROBUSTO)
+# 3. FUNÇÕES DE SUPORTE
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s, e = d_inicio.strftime('%d/%m/%Y'), d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
@@ -125,7 +132,6 @@ if ticker_input:
 
             st.subheader("Simulação de Patrimônio Acumulado")
             
-            # LOGICA DE MESES CORRIGIDA (EVITA ATTRIBUTE ERROR)
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
                 data_limite = datetime.now() - timedelta(days=anos*365 + 15)
                 df_p = df_full[df_full.index >= data_limite].copy()
@@ -133,7 +139,7 @@ if ticker_input:
                 
                 df_p['month'] = df_p.index.to_period('M')
                 meses_idx = df_p.groupby('month').head(1).index.tolist()
-                datas = meses_idx[-(anos * 12):] # Pega exatamente os últimos N meses
+                datas = meses_idx[-(anos * 12):] 
                 
                 cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
                 fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
@@ -151,7 +157,14 @@ if ticker_input:
                 titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
                     if vf > 0:
-                        st.metric(titulo_col, formata_br(vf))
+                        # NOVO CARD DE DESTAQUE PARA O PATRIMÔNIO FINAL
+                        st.markdown(f"""
+                        <div class="total-card">
+                            <div class="total-label">{titulo_col}</div>
+                            <div class="total-amount">{formata_br(vf)}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
                         st.markdown(f"""
                         <div class="info-card">
                             <div class="card-header">Benchmarks (Valor Corrigido)</div>
@@ -165,7 +178,6 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
 
-            # GLOSSÁRIO REFINADO E BLINDADO
             st.markdown("""
 <div class="glossario-container">
 <h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
