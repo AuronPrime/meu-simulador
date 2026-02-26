@@ -21,7 +21,7 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL (GUIA RESTAURADO)
+# 2. BARRA LATERAL
 st.sidebar.header("Guia de Uso")
 st.sidebar.markdown("""
 <div class="instrucoes">
@@ -55,22 +55,21 @@ def get_bcb(codigo, d_ini, d_f):
     try:
         response = requests.get(url, timeout=15)
         if response.status_code == 200:
-            data = response.json()
-            if not data: return pd.DataFrame()
-            df = pd.DataFrame(data)
+            df = pd.DataFrame(response.json())
             df['valor'] = pd.to_numeric(df['valor']) / 100
             df['data'] = pd.to_datetime(df['data'], dayfirst=True)
             return df.set_index('data')
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 @st.cache_data(show_spinner="Buscando dados no mercado...")
 def carregar_tudo(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
+        # Tenta buscar ação
         ticker_obj = yf.Ticker(t_sa)
         df_hist = ticker_obj.history(start="2005-01-01")
         if df_hist.empty: return None
+        
         df = df_hist[['Close']].copy()
         df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
         df.index = df.index.tz_localize(None)
@@ -78,7 +77,7 @@ def carregar_tudo(t, d_ini, d_fim):
         
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
         
-        # IPCA e CDI
+        # Índices BCB
         df_ipca = get_bcb(433, s, e)
         if not df_ipca.empty:
             df["IPCA_Fact"] = (1 + (df_ipca.reindex(pd.date_range(df.index[0], df_ipca.index.max()), method='ffill')['valor']/21)).cumprod().reindex(df.index)
@@ -87,19 +86,12 @@ def carregar_tudo(t, d_ini, d_fim):
         if not df_cdi.empty:
             df["CDI_Fact"] = (1 + df_cdi.reindex(pd.date_range(df.index[0], df_cdi.index.max()), method='ffill')['valor']).cumprod().reindex(df.index)
 
-        try:
-            ibov = yf.download("^BVSP", start="2005-01-01", progress=False)
-            if not ibov.empty:
-                df["IBOV_Fact"] = (ibov['Close'].copy().tz_localize(None) / ibov['Close'].iloc[0]).reindex(df.index).ffill()
-        except: pass
-        
         return df
-    except Exception as e:
-        return None
+    except: return None
 
 # 4. LÓGICA DE EXIBIÇÃO
 if not ticker_input:
-    st.info("💡 Por favor, digite um **Ticker** na barra lateral para iniciar a simulação.")
+    st.info("💡 Por favor, digite um **Ticker** na barra lateral para iniciar.")
 else:
     df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
     if df_completo is not None:
@@ -107,7 +99,7 @@ else:
         
         if not df_v.empty:
             # Rebase
-            for col in ["Total_Fact", "IPCA_Fact", "CDI_Fact", "IBOV_Fact"]:
+            for col in ["Total_Fact", "IPCA_Fact", "CDI_Fact"]:
                 if col in df_v.columns:
                     valid = df_v[col].dropna()
                     if not valid.empty: df_v[col] = df_v[col] / valid.iloc[0]
@@ -126,15 +118,12 @@ else:
                 p = df_v["CDI_Fact"].dropna()
                 fig.add_trace(go.Scatter(x=p.index, y=(p-1)*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
             
-            if mostrar_ibov and "IBOV_Fact" in df_v.columns:
-                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Fact"]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
-            
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
             # CARDS
-            st.subheader(f"💰 Patrimônio Acumulado com Aportes Mensais")
+            st.subheader(f"💰 Patrimônio Acumulado")
             def simular_historico(df_orig, v_mes, anos):
                 n_meses = anos * 12
                 df_rec = df_orig.tail(n_meses * 21)
@@ -160,7 +149,6 @@ else:
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"📈 Lucro Real: {formata_br(lr)}")
             
-            # GLOSSÁRIO RESTAURADO
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores:</b><br>
@@ -169,5 +157,6 @@ else:
             • <b>Ibovespa:</b> O principal índice da B3, composto pelas empresas mais negociadas. Serve para avaliar se sua escolha de ação superou a média do mercado brasileiro.
             </div>
             """, unsafe_allow_html=True)
-        else: st.error("Erro ao buscar dados no período selecionado.")
-    else: st.error(f"Ticker '{ticker_input}' não encontrado ou limite de requisições atingido. Tente novamente em instantes.")
+        else: st.error("Erro ao processar dados no período. Verifique as datas.")
+    else:
+        st.error(f"⚠️ Erro ao buscar '{ticker_input}'. Pode ser limite de acesso do Yahoo ou ticker inválido. Tente novamente em 30 segundos.")
