@@ -11,6 +11,7 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; }
+    .resumo-objetivo { font-size: 0.95rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 5px solid #1f77b4; line-height: 1.6; }
     .instrucoes { font-size: 0.85rem; color: #555; background-color: #f0f2f6; padding: 12px; border-radius: 5px; margin-bottom: 20px; border-left: 5px solid #ccc; }
     .glossario { font-size: 0.85rem; color: #444; margin-top: 40px; border-top: 2px solid #eee; padding-top: 20px; line-height: 1.8; background-color: #f9f9f9; padding: 20px; border-radius: 10px; }
     </style>
@@ -21,18 +22,24 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL
-st.sidebar.header("Guia de Uso")
+# 2. BARRA LATERAL COM RESUMO E GUIA
 st.sidebar.markdown("""
-<div class="instrucoes">
-1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
-2) <b>Aporte:</b> Defina o valor mensal.<br>
-3) <b>Período:</b> O padrão inicia em 10 anos.<br>
-4) <b>Filtros:</b> Compare com índices abaixo.
+<div class="resumo-objetivo">
+<b>Objetivo:</b> Analisar o <b>Total Return</b> (Retorno Total) de um ativo, calculando o acúmulo patrimonial real através do reinvestimento de <b>Proventos (Dividendos e JCP)</b>. A ferramenta aplica algoritmos de fiscalização matemática para neutralizar distorções causadas por <b>desdobramentos (splits), grupamentos e bonificações</b>, garantindo uma simulação fiel de aportes mensais históricos.
 </div>
 """, unsafe_allow_html=True)
 
-ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
+st.sidebar.header("Guia de Uso")
+st.sidebar.markdown("""
+<div class="instrucoes">
+1) <b>Ativo:</b> Digite o ticker (ex: ITUB4).<br>
+2) <b>Aporte:</b> Defina o valor mensal.<br>
+3) <b>Período:</b> Escolha o intervalo histórico.<br>
+4) <b>Filtros:</b> Compare com índices de mercado.
+</div>
+""", unsafe_allow_html=True)
+
+ticker_input = st.sidebar.text_input("Digite o Ticker", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período do Gráfico")
@@ -74,12 +81,10 @@ def carregar_dados_completos(t):
             df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
 
-        # FISCALIZAÇÃO MATEMÁTICA ANTI-ERRO (Proteção contra Splits/Grupamentos)
+        # FISCALIZAÇÃO MATEMÁTICA
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
-        # Yield Real Extraído (Dividendos, JCP, Proventos em geral)
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
-        # Fator Acumulado Blindado
         df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
         
         return df[['Close', 'Adj Close', 'Total_Fact']]
@@ -109,6 +114,7 @@ if ticker_input:
             
             fig = go.Figure()
 
+            # Desenho dos índices
             if mostrar_cdi and not s_cdi.empty:
                 fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
             if mostrar_ipca and not s_ipca.empty:
@@ -118,10 +124,7 @@ if ticker_input:
 
             # Áreas do Gráfico (Valorização e Proventos)
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            
-            # TROCA DE "DIVIDENDOS" PARA "PROVENTOS (DIVIDENDOS/JCP)"
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos (Div/JCP)', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
-            
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
@@ -149,16 +152,15 @@ if ticker_input:
                     if vf > 0:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         st.write(f"Total Investido: {formata_br(vi)}")
-                        st.caption(f"Lucro Acumulado: {formata_br(lucro)}")
+                        st.caption(f"Lucro Líquido: {formata_br(lucro)}")
 
             # 6. GLOSSÁRIO
             st.markdown("""
             <div class="glossario">
-            📌 <b>Entenda os indicadores de comparação:</b><br><br>
-            • <b>Proventos (Div/JCP):</b> Representa a soma de Dividendos, Juros sobre Capital Próprio e outras distribuições em dinheiro reinvestidas no ativo.<br><br>
-            • <b>CDI:</b> Referência de Renda Fixa (Taxa Selic).<br><br>
-            • <b>IPCA:</b> Inflação oficial (Poder de Compra).<br><br>
-            • <b>Ibovespa:</b> Desempenho médio das maiores empresas da bolsa.
+            📌 <b>Glossário Técnico:</b><br><br>
+            • <b>Proventos (Div/JCP):</b> Soma de Dividendos e Juros Sobre Capital Próprio reinvestidos. O cálculo utiliza o preço ajustado para capturar o rendimento real distribuído aos acionistas.<br><br>
+            • <b>Ajustes Corporativos:</b> O algoritmo neutraliza variações nominais de preço oriundas de splits ou grupamentos, impedindo lucros fictícios no histórico.<br><br>
+            • <b>CDI e IPCA:</b> Referências de custo de oportunidade e preservação de poder de compra, respectivamente.
             </div>
             """, unsafe_allow_html=True)
             
