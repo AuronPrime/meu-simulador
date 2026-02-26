@@ -14,25 +14,35 @@ st.markdown("""
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.5; }
     .instrucoes { font-size: 0.85rem; color: #444; background-color: #f0f2f6; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #d1d9e6; }
     
+    /* Cards de Resultados */
     .info-card {
-        background-color: #f1f3f6; 
-        border: 1px solid #d1d9e6; 
+        background-color: #f8fafc; 
+        border: 1px solid #e2e8f0; 
         padding: 18px; 
         border-radius: 12px; 
         margin-top: 10px; 
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
     
-    .card-header { font-size: 0.75rem; font-weight: 800; color: #4b5563; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #cbd5e1; padding-bottom: 5px; }
-    .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1f2937; }
-    .card-destaque { font-size: 0.95rem; font-weight: 700; color: #166534; margin-top: 8px; border-top: 1px solid #ddd; padding-top: 8px; }
+    .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
+    .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
+    .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
     
-    .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 25px; border-radius: 10px; line-height: 1.6; }
-    .glossario-titulo { font-size: 1.1rem; font-weight: 700; color: #1f77b4; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1px; }
-    .glossario-item { margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
-    .glossario-item b { color: #2d3748; }
+    /* Estilização do Glossário (Fix) */
+    .glossario-container {
+        margin-top: 40px;
+        padding: 30px;
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .glossario-titulo { font-size: 1.2rem; font-weight: 700; color: #1f77b4; margin-bottom: 20px; text-transform: uppercase; border-bottom: 2px solid #1f77b4; padding-bottom: 10px; }
+    .glossario-item { margin-bottom: 20px; line-height: 1.6; border-bottom: 1px solid #f1f5f9; padding-bottom: 15px; }
+    .glossario-item b { color: #1e293b; font-size: 0.95rem; }
+    .glossario-item span { color: #475569; font-size: 0.9rem; display: block; margin-top: 4px; }
 
-    .creditos { font-size: 0.8rem; color: #777; margin-top: 15px; text-align: center; }
+    .creditos { font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px; }
     .creditos a { color: #1f77b4; text-decoration: none; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
@@ -40,43 +50,45 @@ st.markdown("""
 def formata_br(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-st.title("📊 Simulador de Acúmulo de Patrimônio")
+# Título Principal com ícone mais sóbrio
+st.title("📈 Simulador de Acúmulo de Patrimônio")
 
 # 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
-O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de splits e bonificações para uma simulação fiel.
+O objetivo desta ferramenta é analisar o <b>Retorno Total</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de mercado para uma simulação fiel.
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.markdown("""
 <div class="instrucoes">
 <b>Como usar:</b><br>
-1. Digite o <b>Ticker</b> da ação (ex: BBAS3).<br>
+1. Digite o <b>Ticker</b> (ex: BBAS3).<br>
 2. Defina o <b>valor mensal</b> do aporte.<br>
-3. Escolha o <b>período</b> do gráfico.<br>
-4. Clique em <b>Analisar Patrimônio</b>.
+3. Escolha o <b>período</b> desejado.<br>
+4. Clique em <b>Analisar</b>.
 </div>
 """, unsafe_allow_html=True)
 
 ticker_input = st.sidebar.text_input("Digite o Ticker", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-st.sidebar.subheader("Período do Gráfico")
+st.sidebar.subheader("Período da Simulação")
 d_fim_padrao = date.today() - timedelta(days=2) 
 d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
+
+# BOTÃO ACIMA DOS CHECKBOXES CONFORME SOLICITADO
+btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
 st.sidebar.subheader("Benchmarks no Gráfico")
 mostrar_cdi = st.sidebar.checkbox("CDI (Renda Fixa)", value=True)
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
-btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
-
-st.sidebar.markdown("""
+st.sidebar.markdown(f"""
 <div class="creditos">
 Desenvolvido por: <br>
 <a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank">IG: Ramoon.Bastos</a>
@@ -149,25 +161,25 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO
-            st.subheader(f"💰 Simulação de Patrimônio Acumulado")
+            # Título de Simulação com ícone sóbrio
+            st.subheader("🏛️ Simulação de Patrimônio Acumulado")
             
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
                 data_limite = datetime.now() - timedelta(days=anos*365)
-                df_periodo = df_full[df_full.index >= data_limite].copy()
-                if len(df_periodo) < 10: return [0]*6
-                df_periodo['month'] = df_periodo.index.to_period('M')
-                datas_aporte = df_periodo.groupby('month').head(1).index
+                df_p = df_full[df_full.index >= data_limite].copy()
+                if len(df_p) < 10: return [0]*6
+                df_p['month'] = df_p.index.to_period('M')
+                datas = df_p.groupby('month').head(1).index
                 
-                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
-                fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
-                vf_ativo = cotas * df_full["Close"].iloc[-1] * (fator_tr / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
+                fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
+                vf_ativo = cotas * df_full["Close"].iloc[-1] * (fator_tr / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
                 
                 def calc_corrigido(serie):
                     if serie.empty: return 0
-                    return sum(valor_mensal * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas_aporte)
+                    return sum(valor_mensal * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas)
 
-                return vf_ativo, len(datas_aporte) * valor_mensal, vf_ativo - (len(datas_aporte) * valor_mensal), calc_corrigido(s_cdi_f), calc_corrigido(s_ipca_f), calc_corrigido(s_ibov_f)
+                return vf_ativo, len(datas) * valor_mensal, vf_ativo - (len(datas) * valor_mensal), calc_corrigido(s_cdi_f), calc_corrigido(s_ipca_f), calc_corrigido(s_ibov_f)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
@@ -177,55 +189,63 @@ if ticker_input:
                         st.metric(f"Total em {anos} anos", formata_br(vf))
                         st.markdown(f"""
                         <div class="info-card">
-                            <div class="card-header">🏛️ Benchmarks (Alvos Corrigidos)</div>
+                            <div class="card-header">🏛️ Benchmarks (Valor Corrigido)</div>
                             <div class="card-item">🎯 <b>CDI:</b> {formata_br(v_cdi)}</div>
                             <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
                             <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
-                            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
+                            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
                             <div class="card-header">Análise da Carteira</div>
-                            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
+                            <div class="card-item">💵 <b>Capital Nominal:</b> {formata_br(vi)}</div>
                             <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
                         </div>
                         """, unsafe_allow_html=True)
 
-            # 6. SUPER GLOSSÁRIO DO INVESTIDOR
-            st.markdown("""
-            <div class="glossario">
-                <div class="glossario-titulo">📖 Glossário do Investidor</div>
+            # GLOSSÁRIO REFORMULADO E FORMATADO
+            st.markdown(f"""
+            <div class="glossario-container">
+                <div class="glossario-titulo">📖 Guia de Termos e Indicadores</div>
                 
                 <div class="glossario-item">
-                    <b>• CDI (Certificado de Depósito Interbancário):</b> É a principal referência da Renda Fixa. Ele representa o rendimento que você teria se deixasse seu dinheiro em uma aplicação conservadora (como um Tesouro Selic ou CDB de banco). Serve para você saber se o risco da Bolsa valeu a pena.
+                    <b>• CDI (Certificado de Depósito Interbancário)</b>
+                    <span>É a régua da renda fixa. Representa o retorno de aplicações seguras como o Tesouro Selic. Serve para você avaliar se o risco de investir em ações trouxe um retorno superior ao que você ganharia "sem risco".</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Correção IPCA (Inflação):</b> É o seu "poder de compra". Este valor traz o seu investimento do passado para o dinheiro de hoje. Ele mostra quanto você precisaria ter agora para comprar as mesmas coisas que comprava na época dos aportes. É o alvo número 1 de qualquer investidor: ganhar da inflação.
+                    <b>• Correção IPCA (Inflação)</b>
+                    <span>Representa a atualização do seu dinheiro para o <b>valor presente</b>. Indica quanto você precisaria ter hoje para manter o mesmo poder de compra que tinha no passado. Se seu lucro é maior que esta correção, você ficou mais rico de verdade.</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Ibovespa:</b> É o principal índice da Bolsa brasileira. Ele funciona como uma "média" do desempenho das maiores empresas do país. Comparar sua ação com o Ibovespa ajuda a entender se você escolheu uma empresa acima ou abaixo da média do mercado.
+                    <b>• Ibovespa</b>
+                    <span>É o termômetro do mercado brasileiro. Reflete a média de desempenho das maiores empresas da Bolsa. Comparar seu ativo com ele mostra se você está batendo a média do mercado.</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Capital Nominal Investido:</b> É o valor real que saiu do seu bolso. Se você aportou R$ 1.000 por mês durante um ano, o seu capital nominal é R$ 12.000, "frio", sem juros ou correções.
+                    <b>• Capital Nominal Investido</b>
+                    <span>É o somatório bruto de todos os aportes mensais que você fez. É o dinheiro que efetivamente saiu da sua conta corrente ao longo do tempo.</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Lucro Acumulado:</b> É a diferença entre o que você tem hoje (Patrimônio Total) e o que você tirou do bolso (Capital Nominal). É o crescimento gerado pelo seu dinheiro trabalhando para você.
+                    <b>• Lucro Acumulado</b>
+                    <span>É a diferença entre o seu patrimônio atual e o total investido nominalmente. É o quanto o seu capital cresceu através de juros, valorização e proventos.</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Retorno Total:</b> É a métrica mais importante. No gráfico, ela combina a subida do preço da ação com todos os dividendos que você recebeu e reinvestiu. É a visão completa do seu enriquecimento.
+                    <b>• Retorno Total</b>
+                    <span>A métrica mais fiel ao investidor. No gráfico, ela une a valorização do preço da ação com o reinvestimento automático de todos os proventos recebidos.</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Valorização:</b> É apenas o crescimento do preço da "cota" na bolsa. Se você comprou por R$ 10 e hoje vale R$ 15, você teve 50% de valorização no preço.
+                    <b>• Valorização</b>
+                    <span>Refere-se apenas à subida (ou descida) do preço da cota no pregão da Bolsa, sem considerar o pagamento de proventos.</span>
                 </div>
                 
                 <div class="glossario-item">
-                    <b>• Proventos (Div/JCP):</b> É a sua "renda passiva". São os lucros que a empresa distribui aos acionistas em dinheiro (Dividendos ou Juros sobre Capital Próprio). O simulador assume que você usou esse dinheiro para comprar mais ações, acelerando o efeito bola de neve.
+                    <b>• Proventos (Div/JCP)</b>
+                    <span>É a parte do lucro da empresa que cai na sua conta. O simulador considera que esses valores foram usados para comprar mais ações, acelerando o crescimento do seu patrimônio.</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
-else: st.info("💡 Digite um Ticker no menu lateral e clique em Analisar para começar.")
+else: st.info("💡 Digite um Ticker no menu lateral para iniciar a análise.")
