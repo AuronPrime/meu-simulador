@@ -125,28 +125,37 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO COM IPCA CORRIGIDO (FUTURO)
+            # 5. CARDS DE PATRIMÔNIO COM CORREÇÃO INVERSA
             st.subheader(f"💰 Simulação de Patrimônio (Aportes Mensais: {formata_br(valor_aporte)})")
             
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
-                n_meses = anos * 12
-                df_calc = df_full.tail(min(len(df_full), n_meses * 22))
-                if len(df_calc) < 10: return [0]*6
-                df_calc['month'] = df_calc.index.to_period('M')
-                datas = df_calc.groupby('month').head(1).index[-n_meses:]
+                # Determinar o ponto de início (hoje - X anos)
+                data_limite = datetime.now() - timedelta(days=anos*365)
+                df_periodo = df_full[df_full.index >= data_limite].copy()
                 
-                # Ativo
-                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
-                fator_r = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
-                vf_at = cotas * df_full["Close"].iloc[-1] * (fator_r / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
+                if len(df_periodo) < 10: return [0]*6
                 
-                # Benchmarks com correção INVERSA (Valor que os R$ 1000 de cada mês precisariam ser hoje)
-                def c_idx_corrigido(s):
-                    if s.empty: return 0
-                    # Pegamos o valor investido e multiplicamos pelo fator de crescimento do índice
-                    return sum(valor_mensal * (s.iloc[-1] / s.loc[d]) for d in datas if d in s.index)
+                df_periodo['month'] = df_periodo.index.to_period('M')
+                datas_aporte = df_periodo.groupby('month').head(1).index
+                n_aportes = len(datas_aporte)
+                
+                # Cálculo do Patrimônio do Ativo (Total Return)
+                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
+                fator_ajuste = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
+                vf_ativo = cotas * df_full["Close"].iloc[-1] * (fator_ajuste / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                
+                # Benchmarks Corrigidos (Quanto os R$ 1000 de cada mês valem hoje)
+                def calc_benchmark(serie):
+                    if serie.empty: return 0
+                    total = 0
+                    for d in datas_aporte:
+                        # Busca o valor mais próximo disponível na série do índice
+                        idx = serie.index.get_indexer([d], method='backfill')[0]
+                        fator = serie.iloc[-1] / serie.iloc[idx]
+                        total += valor_mensal * fator
+                    return total
 
-                return vf_at, n_meses * valor_mensal, vf_at - (n_meses * valor_mensal), c_idx_corrigido(s_cdi_f), c_idx_corrigido(s_ipca_f), c_idx_corrigido(s_ibov_f)
+                return vf_ativo, n_aportes * valor_mensal, vf_ativo - (n_aportes * valor_mensal), calc_benchmark(s_cdi_f), calc_benchmark(s_ipca_f), calc_benchmark(s_ibov_f)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
@@ -158,7 +167,7 @@ if ticker_input:
                         <div class="info-card">
                             <div class="card-header">🏛️ Benchmarks (Alvos a bater)</div>
                             <div class="card-item">🎯 <b>CDI (Renda Fixa):</b> {formata_br(v_cdi)}</div>
-                            <div class="card-item">📈 <b>Ibovespa (Bolsa):</b> {formata_br(v_ibov)}</div>
+                            <div class="card-item">📈 <b>Ibovespa (Mercado):</b> {formata_br(v_ibov)}</div>
                             <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
                             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
                             <div class="card-header">Análise da Carteira</div>
@@ -167,17 +176,14 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
 
-            # 6. GLOSSÁRIO DIDÁTICO INVERTIDO
+            # 6. GLOSSÁRIO DIDÁTICO
             st.markdown("""
             <div class="glossario">
             <div class="glossario-item">
-                📌 <b>Correção IPCA (Alvo):</b> Este valor mostra quanto os seus aportes mensais somados valeriam hoje se fossem apenas corrigidos pela inflação. Exemplo: Se você investiu R$ 12.000 (R$ 1.000/mês), a <b>Correção IPCA</b> pode mostrar R$ 12.800. Isso significa que, para comprar as mesmas coisas de um ano atrás, você precisa de R$ 800 a mais. Se o seu patrimônio final for maior que este alvo, você ganhou poder de compra real.
+                📌 <b>Correção IPCA (Alvo):</b> Mostra quanto o seu dinheiro investido precisaria valer hoje para comprar as mesmas coisas que comprava no passado. Por exemplo: se você investiu R$ 12.000 ao longo de 1 ano, a <b>Correção IPCA</b> mostrará um valor maior (ex: R$ 12.600), indicando que hoje você precisa de mais dinheiro para ter o mesmo poder de compra de antes.
             </div>
             <div class="glossario-item">
-                📌 <b>Capital Nominal Investido:</b> É o total de dinheiro "vivo" que você tirou do bolso ao longo do tempo.
-            </div>
-            <div class="glossario-item">
-                📌 <b>Lucro Acumulado:</b> É a diferença entre o que você tem hoje (Patrimônio) e o que você tirou do bolso (Capital Nominal).
+                📌 <b>Proventos (Div/JCP):</b> Representa o reinvestimento total de Dividendos e Juros sobre Capital Próprio.
             </div>
             </div>
             """, unsafe_allow_html=True)
