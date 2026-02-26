@@ -9,15 +9,22 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Adicionado o .total-card para o destaque superior
+# Estilos CSS - Ajustados para maior discrição e padronização
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
     
-    /* Card de Destaque para o Valor Total */
-    .total-card { background-color: #ffffff; border: 2px solid #1f77b4; padding: 15px; border-radius: 12px; margin-bottom: 10px; text-align: center; box-shadow: 0 2px 4px rgba(31,119,180,0.1); }
-    .total-label { font-size: 0.8rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
+    /* Card de Destaque - Agora mais discreto, combinando com os de baixo */
+    .total-card { 
+        background-color: #f8fafc; 
+        border: 1px solid #e2e8f0; 
+        padding: 15px; 
+        border-radius: 12px; 
+        margin-bottom: 10px; 
+        text-align: center; 
+    }
+    .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
     /* Cards de Detalhes */
@@ -37,7 +44,7 @@ def formata_br(valor):
 
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL - BEM-VINDO CIRÚRGICO
+# 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
@@ -157,7 +164,7 @@ if ticker_input:
                 titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
                     if vf > 0:
-                        # NOVO CARD DE DESTAQUE PARA O PATRIMÔNIO FINAL
+                        # Card de Patrimônio Final ajustado para cores discretas
                         st.markdown(f"""
                         <div class="total-card">
                             <div class="total-label">{titulo_col}</div>
@@ -173,7 +180,7 @@ if ticker_input:
                             <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
                             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
                             <div class="card-header">Análise da Carteira</div>
-                            <div class="card-item">💵 <b>Capital Nominal:</b> {formata_br(vi)}</div>
+                            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
                             <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
                         </div>
                         """, unsafe_allow_html=True)
