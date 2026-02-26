@@ -21,7 +21,7 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL COM INSTRUÇÕES RESTAURADAS
+# 2. BARRA LATERAL (INSTRUÇÕES RESTAURADAS)
 st.sidebar.header("Guia de Uso")
 st.sidebar.markdown("""
 <div class="instrucoes">
@@ -68,16 +68,19 @@ def carregar_dados_completos(t):
     if not t: return None
     t_sa = t if ".SA" in t else t + ".SA"
     try:
+        # yf.download garante que o Adj Close venha corretamente
         df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
 
-        # FISCALIZAÇÃO MATEMÁTICA ANTI-ERRO (CSMG3)
+        # FISCALIZAÇÃO MATEMÁTICA (Resolve CSMG3 e TAEE3)
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
+        # O Yield Real é o que o Adj Close capturou além da variação do preço nominal
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
+        # Fator Acumulado Blindado
         df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
         
         return df[['Close', 'Adj Close', 'Total_Fact']]
@@ -120,7 +123,7 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO (CÁLCULO DE LUCRO LÍQUIDO)
+            # 5. CARDS DE PATRIMÔNIO (VOLTANDO PARA LUCRO BRUTO/TOTAL)
             st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
             def calcular_patrimonio(df_full, valor_mensal, anos):
@@ -129,28 +132,24 @@ if ticker_input:
                 if len(df_calc) < 20: return 0, 0, 0
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
+                # Compra cotas pelo preço de tela
                 total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
+                # Reinvestimento baseado no fator blindado
                 fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
-                valor_final_bruto = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
-                
+                valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
                 investido = n_meses * valor_mensal
-                lucro_bruto = valor_final_bruto - investido
-                # Aplicando 15% de IR sobre o lucro (Simplificação de Swing Trade)
-                lucro_liquido = lucro_bruto * 0.85 if lucro_bruto > 0 else lucro_bruto
-                valor_final_liquido = investido + lucro_liquido
-                
-                return valor_final_liquido, investido, lucro_liquido
+                return valor_final, investido, valor_final - investido
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                v_liq, vi, l_liq = calcular_patrimonio(df_acao, valor_aporte, anos)
+                vf, vi, lucro = calcular_patrimonio(df_acao, valor_aporte, anos)
                 with col:
-                    if v_liq > 0:
-                        st.metric(f"Acúmulo em {years if 'years' in locals() else anos} anos", formata_br(v_liq))
+                    if vf > 0:
+                        st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         st.write(f"Total Investido: {formata_br(vi)}")
-                        st.caption(f"Lucro Líquido (estimado): {formata_br(l_liq)}")
+                        st.caption(f"Lucro Acumulado: {formata_br(lucro)}")
 
-            # 6. GLOSSÁRIO DETALHADO RESTAURADO
+            # 6. GLOSSÁRIO DETALHADO (RESTAURADO)
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores de comparação:</b><br><br>
