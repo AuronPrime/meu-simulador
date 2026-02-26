@@ -21,7 +21,7 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL (Guia Restaurado)
+# 2. BARRA LATERAL
 st.sidebar.header("Guia de Uso")
 st.sidebar.markdown("""
 <div class="instrucoes">
@@ -49,7 +49,7 @@ mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=False)
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
-# 3. FUNÇÕES DE SUPORTE (Lógica que você validou)
+# 3. FUNÇÕES DE SUPORTE
 def get_bcb(codigo, d_ini, d_f):
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={d_ini}&dataFinal={d_f}"
     try:
@@ -72,8 +72,10 @@ def carregar_tudo(t, d_ini, d_fim):
         df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
         df.index = df.index.tz_localize(None)
         
+        # Fator de Retorno da Ação
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         
+        # Ibovespa
         try:
             ibov = yf.download("^BVSP", start="2005-01-01", progress=False)
             if not ibov.empty:
@@ -84,17 +86,18 @@ def carregar_tudo(t, d_ini, d_fim):
             
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
         
+        # IPCA (Mensal)
         df_ipca_raw = get_bcb(433, s, e)
         if not df_ipca_raw.empty:
-            last_ipca_date = df_ipca_raw.index.max()
-            ipca_f = df_ipca_raw.reindex(pd.date_range(df.index[0], last_ipca_date), method='ffill')
+            ipca_f = df_ipca_raw.reindex(pd.date_range(df.index[0], df_ipca_raw.index.max()), method='ffill')
             df["IPCA_Fact"] = (1 + (ipca_f['valor']/21)).cumprod().reindex(df.index)
         
+        # CDI (Diário - Correção aqui)
         df_cdi_raw = get_bcb(12, s, e)
         if not df_cdi_raw.empty:
-            last_cdi_date = df_cdi_raw.index.max()
-            cdi_f = df_cdi_raw.reindex(pd.date_range(df.index[0], last_cdi_date), method='ffill')
-            df["CDI_Fact"] = (1 + cdi_f['valor']).cumprod().reindex(df.index)
+            # Reindexamos para todos os dias e usamos ffill para cobrir fins de semana
+            cdi_f = df_cdi_raw.reindex(pd.date_range(df.index[0], df_cdi_raw.index.max()), method='ffill')
+            df["CDI_Fact"] = (1 + cdi_f['valor']).cumprod().reindex(df.index).ffill()
         
         return df
     except: return None
@@ -108,14 +111,13 @@ elif btn_analisar or ticker_input:
         df_v = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
-            colunas_fator = ["Total_Fact", "IPCA_Fact", "CDI_Fact"]
-            if "IBOV_Fact" in df_v.columns: colunas_fator.append("IBOV_Fact")
-            
+            # Rebase
+            colunas_fator = ["Total_Fact", "IPCA_Fact", "CDI_Fact", "IBOV_Fact"]
             for col in colunas_fator:
                 if col in df_v.columns:
-                    valid_vals = df_v[col].dropna()
-                    if not valid_vals.empty:
-                        df_v[col] = df_v[col] / valid_vals.iloc[0]
+                    valid = df_v[col].dropna()
+                    if not valid.empty:
+                        df_v[col] = df_v[col] / valid.iloc[0]
             
             df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
             
@@ -124,12 +126,12 @@ elif btn_analisar or ticker_input:
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             
             if mostrar_ipca and "IPCA_Fact" in df_v.columns:
-                df_plot = df_v["IPCA_Fact"].dropna()
-                fig.add_trace(go.Scatter(x=df_plot.index, y=(df_plot-1)*100, name='IPCA (Inflação)', line=dict(color='red', width=2)))
+                p = df_v["IPCA_Fact"].dropna()
+                fig.add_trace(go.Scatter(x=p.index, y=(p-1)*100, name='IPCA (Inflação)', line=dict(color='red', width=2)))
             
             if mostrar_cdi and "CDI_Fact" in df_v.columns:
-                df_plot = df_v["CDI_Fact"].dropna()
-                fig.add_trace(go.Scatter(x=df_plot.index, y=(df_plot-1)*100, name='CDI (Renda Fixa)', line=dict(color='gray', width=1.5, dash='dash')))
+                p = df_v["CDI_Fact"].dropna()
+                fig.add_trace(go.Scatter(x=p.index, y=(p-1)*100, name='CDI (Renda Fixa)', line=dict(color='gray', width=1.5, dash='dash')))
             
             if mostrar_ibov and "IBOV_Fact" in df_v.columns:
                 fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Fact"]-1)*100, name='Ibovespa (Mercado)', line=dict(color='orange', width=2)))
@@ -165,7 +167,6 @@ elif btn_analisar or ticker_input:
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"📈 Lucro Real: {formata_br(lr)}")
 
-            # GLOSSÁRIO RESTAURADO (Texto Original)
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores:</b><br>
