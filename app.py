@@ -21,7 +21,7 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL
+# 2. BARRA LATERAL (Guia Restaurado)
 st.sidebar.header("Guia de Uso")
 st.sidebar.markdown("""
 <div class="instrucoes">
@@ -49,7 +49,7 @@ mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=False)
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
-# 3. FUNÇÕES DE SUPORTE
+# 3. FUNÇÕES DE SUPORTE (Lógica que você validou)
 def get_bcb(codigo, d_ini, d_f):
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={d_ini}&dataFinal={d_f}"
     try:
@@ -72,10 +72,8 @@ def carregar_tudo(t, d_ini, d_fim):
         df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
         df.index = df.index.tz_localize(None)
         
-        # Fator Acumulado de Retorno Total
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         
-        # Ibovespa
         try:
             ibov = yf.download("^BVSP", start="2005-01-01", progress=False)
             if not ibov.empty:
@@ -86,20 +84,17 @@ def carregar_tudo(t, d_ini, d_fim):
             
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
         
-        # IPCA (Busca crua)
         df_ipca_raw = get_bcb(433, s, e)
         if not df_ipca_raw.empty:
-            # Reindexamos apenas até a ÚLTIMA data que o BC forneceu, sem inventar o futuro
             last_ipca_date = df_ipca_raw.index.max()
             ipca_f = df_ipca_raw.reindex(pd.date_range(df.index[0], last_ipca_date), method='ffill')
-            df["IPCA_Fact"] = (1 + (ipca_f['valor']/21)).cumprod().reindex(df.index) # O reindex aqui deixará NaN onde não há dado
+            df["IPCA_Fact"] = (1 + (ipca_f['valor']/21)).cumprod().reindex(df.index)
         
-        # CDI (Busca crua)
         df_cdi_raw = get_bcb(12, s, e)
         if not df_cdi_raw.empty:
             last_cdi_date = df_cdi_raw.index.max()
             cdi_f = df_cdi_raw.reindex(pd.date_range(df.index[0], last_cdi_date), method='ffill')
-            df["CDI_Fact"] = (1 + cdi_f['valor']).cumprod().reindex(df.index) # NaN no final se não houver dado
+            df["CDI_Fact"] = (1 + cdi_f['valor']).cumprod().reindex(df.index)
         
         return df
     except: return None
@@ -113,16 +108,14 @@ elif btn_analisar or ticker_input:
         df_v = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
-            # Rebase para o início do período selecionado
             colunas_fator = ["Total_Fact", "IPCA_Fact", "CDI_Fact"]
             if "IBOV_Fact" in df_v.columns: colunas_fator.append("IBOV_Fact")
             
             for col in colunas_fator:
                 if col in df_v.columns:
-                    # Só fazemos o rebase se o primeiro valor não for nulo
-                    first_val = df_v[col].dropna().iloc[0] if not df_v[col].dropna().empty else None
-                    if first_val:
-                        df_v[col] = df_v[col] / first_val
+                    valid_vals = df_v[col].dropna()
+                    if not valid_vals.empty:
+                        df_v[col] = df_v[col] / valid_vals.iloc[0]
             
             df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
             
@@ -130,20 +123,18 @@ elif btn_analisar or ticker_input:
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             
-            # Linhas de Comparação (Usando dropna() no plot para a linha parar onde o dado acaba)
             if mostrar_ipca and "IPCA_Fact" in df_v.columns:
                 df_plot = df_v["IPCA_Fact"].dropna()
-                fig.add_trace(go.Scatter(x=df_plot.index, y=(df_plot-1)*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
+                fig.add_trace(go.Scatter(x=df_plot.index, y=(df_plot-1)*100, name='IPCA (Inflação)', line=dict(color='red', width=2)))
             
             if mostrar_cdi and "CDI_Fact" in df_v.columns:
                 df_plot = df_v["CDI_Fact"].dropna()
-                fig.add_trace(go.Scatter(x=df_plot.index, y=(df_plot-1)*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
+                fig.add_trace(go.Scatter(x=df_plot.index, y=(df_plot-1)*100, name='CDI (Renda Fixa)', line=dict(color='gray', width=1.5, dash='dash')))
             
             if mostrar_ibov and "IBOV_Fact" in df_v.columns:
-                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Fact"]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Fact"]-1)*100, name='Ibovespa (Mercado)', line=dict(color='orange', width=2)))
             
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
-            
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -160,8 +151,6 @@ elif btn_analisar or ticker_input:
                 f_total = recorte["Total_Fact"].iloc[-1] / recorte["Total_Fact"].iloc[0]
                 v_final = cotas * recorte["Close"].iloc[-1] * (f_total/(recorte["Close"].iloc[-1] / recorte["Close"].iloc[0]))
                 v_investido = n_meses * v_mes
-                
-                # Lucro Real (Usa o último IPCA disponível para o cálculo)
                 ipca_card = recorte["IPCA_Fact"].ffill()
                 f_ipca_card = ipca_card / ipca_card.iloc[0]
                 l_real = v_final - sum(v_mes * (f_ipca_card.iloc[-1] / f_ipca_card.loc[d]) for d in datas_aporte)
@@ -175,13 +164,14 @@ elif btn_analisar or ticker_input:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"📈 Lucro Real: {formata_br(lr)}")
-                    else: st.warning(f"Sem dados de {anos} anos.")
 
+            # GLOSSÁRIO RESTAURADO (Texto Original)
             st.markdown("""
             <div class="glossario">
-            📌 <b>Fidelidade dos Dados:</b><br>
-            • As linhas de <b>CDI</b> e <b>IPCA</b> são interrompidas automaticamente assim que atingem a última divulgação oficial do Banco Central/IBGE.<br>
-            • Isso garante que você não veja projeções estimadas, apenas dados reais consolidados.
+            📌 <b>Entenda os indicadores:</b><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> Representa o rendimento médio da Renda Fixa pós-fixada. É a referência mínima para um investidor conservador.<br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É a medida oficial da inflação no Brasil. Quando seu lucro real é positivo, significa que seu dinheiro ganhou poder de compra.<br>
+            • <b>Ibovespa (Mercado):</b> O principal índice da B3, composto pelas empresas mais negociadas. Serve para avaliar se sua escolha de ação superou a média do mercado brasileiro.
             </div>
             """, unsafe_allow_html=True)
         else: st.error("Sem dados para o período.")
