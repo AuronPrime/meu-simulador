@@ -9,17 +9,26 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS Restaurados
+# Estilos CSS - Ajustados para maior discrição e padronização
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
     
-    .total-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 12px; margin-bottom: 10px; text-align: center; min-height: 110px; display: flex; flex-direction: column; justify-content: center; }
+    /* Card de Destaque - Agora mais discreto, combinando com os de baixo */
+    .total-card { 
+        background-color: #f8fafc; 
+        border: 1px solid #e2e8f0; 
+        padding: 15px; 
+        border-radius: 12px; 
+        margin-bottom: 10px; 
+        text-align: center; 
+    }
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
-    
-    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; min-height: 280px; }
+
+    /* Cards de Detalhes */
+    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
@@ -27,7 +36,6 @@ st.markdown("""
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
-    .aviso-periodo { font-size: 0.85rem; color: #94a3b8; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,7 +44,7 @@ def formata_br(valor):
 
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL - TEXTO RESTAURADO
+# 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
@@ -47,12 +55,11 @@ O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, rei
 ticker_input = st.sidebar.text_input("Digite o Ticker", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-# Sugestão de datas com margem para garantir os 10 anos
-d_fim_sugestao = date.today() - timedelta(days=2) 
-d_ini_sugestao = d_fim_sugestao - timedelta(days=365*10 + 5) 
-
-data_inicio = st.sidebar.date_input("Início", d_ini_sugestao, format="DD/MM/YYYY")
-data_fim = st.sidebar.date_input("Fim", d_fim_sugestao, format="DD/MM/YYYY")
+st.sidebar.subheader("Período da Simulação")
+d_fim_padrao = date.today() - timedelta(days=2) 
+d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
+data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
+data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
@@ -61,19 +68,27 @@ mostrar_cdi = st.sidebar.checkbox("CDI (Renda Fixa)", value=True)
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
+st.sidebar.markdown(f"""
+<div style="font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+Desenvolvido por: <br>
+<a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank" style="color: #1f77b4; text-decoration: none; font-weight: bold;">IG: Ramoon.Bastos</a>
+</div>
+""", unsafe_allow_html=True)
+
 # 3. FUNÇÕES DE SUPORTE
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s, e = d_inicio.strftime('%d/%m/%Y'), d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
-    try:
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200:
-            df = pd.DataFrame(r.json())
-            df['data'] = pd.to_datetime(df['data'], dayfirst=True)
-            df['valor'] = pd.to_numeric(df['valor']) / 100
-            df = df.set_index('data')
-            return (1 + df['valor']).cumprod()
-    except: pass
+    for i in range(5):
+        try:
+            r = requests.get(url, timeout=30)
+            if r.status_code == 200:
+                df = pd.DataFrame(r.json())
+                df['data'] = pd.to_datetime(df['data'], dayfirst=True)
+                df['valor'] = pd.to_numeric(df['valor']) / 100
+                df = df.set_index('data')
+                return (1 + df['valor']).cumprod()
+        except: time.sleep(i + 1)
     return pd.Series(dtype='float64')
 
 @st.cache_data(show_spinner=False)
@@ -81,7 +96,7 @@ def carregar_dados_completos(t):
     if not t: return None
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        df = yf.download(t_sa, start="2000-01-01", progress=False, auto_adjust=False)
+        df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
@@ -94,88 +109,82 @@ def carregar_dados_completos(t):
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
-    df_acao = carregar_dados_completos(ticker_input)
+    with st.spinner("Sincronizando dados de mercado..."):
+        s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
+        s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
+        df_acao = carregar_dados_completos(ticker_input)
+        df_ibov_c = pd.Series()
+        try:
+            ibov_raw = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
+            if not ibov_raw.empty:
+                if isinstance(ibov_raw.columns, pd.MultiIndex): ibov_raw.columns = ibov_raw.columns.get_level_values(0)
+                df_ibov_c = ibov_raw['Close']
+        except: pass
+
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
-        
         if not df_v.empty:
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
             df_v["Price_Base_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
-            if mostrar_cdi:
-                s_cdi_g = busca_indice_bcb(12, data_inicio, data_fim)
-                if not s_cdi_g.empty: fig.add_trace(go.Scatter(x=s_cdi_g.index, y=(s_cdi_g/s_cdi_g.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
-            
+            if not s_cdi.empty: fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
+            if not s_ipca.empty: fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
+            if not df_ibov_c.empty: fig.add_trace(go.Scatter(x=df_ibov_c.index, y=(df_ibov_c/df_ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
-            fig.update_layout(template="plotly_white", hovermode="x unified", margin=dict(l=10, r=10, t=40, b=10))
+            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Simulação de Patrimônio Acumulado")
-            st.caption(f"Cálculos baseados em aportes mensais finalizando em {data_fim.strftime('%d/%m/%Y')}")
-
-            # FUNÇÃO DE CÁLCULO DINÂMICO COM IBOVESPA RESTAURADO
-            def calcular_janela_movel(df_full, v_aporte, anos, d_fim_alvo, d_inicio_limite):
-                d_inicio_janela = pd.to_datetime(d_fim_alvo) - pd.DateOffset(years=anos)
-                if d_inicio_janela < pd.to_datetime(d_inicio_limite) or d_inicio_janela < df_full.index[0]:
-                    return None
+            
+            def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
+                data_limite = datetime.now() - timedelta(days=anos*365 + 15)
+                df_p = df_full[df_full.index >= data_limite].copy()
+                if len(df_p) < 5: return [0]*6
                 
-                df_janela = df_full.loc[d_inicio_janela:pd.to_datetime(d_fim_alvo)].copy()
-                df_janela['month'] = df_janela.index.to_period('M')
-                datas_aportes = df_janela.groupby('month').head(1).index.tolist()
+                df_p['month'] = df_p.index.to_period('M')
+                meses_idx = df_p.groupby('month').head(1).index.tolist()
+                datas = meses_idx[-(anos * 12):] 
                 
-                # Ação
-                cotas = sum(v_aporte / df_full.loc[d, 'Close'] for d in datas_aportes)
-                fator_tr = df_full.loc[pd.to_datetime(d_fim_alvo), "Total_Fact"] / df_full.loc[datas_aportes[0], "Total_Fact"]
-                vf_ativo = cotas * df_full.loc[pd.to_datetime(d_fim_alvo), 'Close'] * (fator_tr / (df_full.loc[pd.to_datetime(d_fim_alvo), 'Close'] / df_full.loc[datas_aportes[0], 'Close']))
+                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
+                fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
+                vf_ativo = cotas * df_full["Close"].iloc[-1] * (fator_tr / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
                 
-                # Benchmarks
-                s_cdi = busca_indice_bcb(12, d_inicio_janela, d_fim_alvo)
-                s_ipca = busca_indice_bcb(433, d_inicio_janela, d_fim_alvo)
-                
-                ibov_vf = 0
-                try:
-                    ibov = yf.download("^BVSP", start=d_inicio_janela, end=pd.to_datetime(d_fim_alvo)+timedelta(days=1), progress=False)
-                    if not ibov.empty:
-                        if isinstance(ibov.columns, pd.MultiIndex): ibov.columns = ibov.columns.get_level_values(0)
-                        ibov_vf = sum(v_aporte * (ibov['Close'].iloc[-1] / ibov.loc[ibov.index.asof(d), 'Close']) for d in datas_aportes)
-                except: pass
-
-                def calc_ref(serie):
+                def calc_corrigido(serie):
                     if serie.empty: return 0
-                    return sum(v_aporte * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas_aportes)
+                    return sum(valor_mensal * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas)
 
-                return {
-                    "vf": vf_ativo, "vi": len(datas_aportes) * v_aporte, "lucro": vf_ativo - (len(datas_aportes) * v_aporte),
-                    "cdi": calc_ref(s_cdi), "ipca": calc_ref(s_ipca), "ibov": ibov_vf
-                }
+                return vf_ativo, len(datas) * valor_mensal, vf_ativo - (len(datas) * valor_mensal), calc_corrigido(s_cdi_f), calc_corrigido(s_ipca_f), calc_corrigido(s_ibov_f)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                res = calcular_janela_movel(df_acao, valor_aporte, anos, data_fim, data_inicio)
+                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
                 titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
-                    if res:
-                        st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="total-amount">{formata_br(res["vf"])}</div></div>', unsafe_allow_html=True)
+                    if vf > 0:
+                        # Card de Patrimônio Final ajustado para cores discretas
                         st.markdown(f"""
-                        <div class="info-card">
-                            <div class="card-header">Benchmarks na Janela</div>
-                            <div class="card-item">🎯 <b>CDI:</b> {formata_br(res["cdi"])}</div>
-                            <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(res["ibov"])}</div>
-                            <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(res["ipca"])}</div>
-                            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
-                            <div class="card-header">Análise da Carteira</div>
-                            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(res["vi"])}</div>
-                            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(res["lucro"])}</div>
+                        <div class="total-card">
+                            <div class="total-label">{titulo_col}</div>
+                            <div class="total-amount">{formata_br(vf)}</div>
                         </div>
                         """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="aviso-periodo">Período Insuficiente</div></div>', unsafe_allow_html=True)
-                        st.markdown('<div class="info-card"><div class="aviso-periodo">Aumente o intervalo de datas no menu lateral para habilitar esta janela de tempo.</div></div>', unsafe_allow_html=True)
+                        
+                        st.markdown(f"""
+                        <div class="info-card">
+                            <div class="card-header">Benchmarks (Valor Corrigido)</div>
+                            <div class="card-item">🎯 <b>CDI:</b> {formata_br(v_cdi)}</div>
+                            <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
+                            <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>
+                            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+                            <div class="card-header">Análise da Carteira</div>
+                            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
+                            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-            # GUIA DE TERMOS TOTALMENTE RESTAURADO
             st.markdown("""
 <div class="glossario-container">
 <h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
@@ -194,4 +203,4 @@ if ticker_input:
 </div>""", unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
-else: st.info("💡 Digite um Ticker no menu lateral para iniciar a análise.")
+else: st.info("💡 Digite um Ticker no menu lateral para iniciar.")
