@@ -9,12 +9,13 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Originais preservados
+# Estilos CSS - Ajustados para maior discrição e padronização
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
     
+    /* Card de Destaque - Agora mais discreto, combinando com os de baixo */
     .total-card { 
         background-color: #f8fafc; 
         border: 1px solid #e2e8f0; 
@@ -26,6 +27,7 @@ st.markdown("""
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
+    /* Cards de Detalhes */
     .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
@@ -46,16 +48,16 @@ st.title("Simulador de Acúmulo de Patrimônio")
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
-O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP).
+O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP). Para garantir precisão técnica, utilizamos um algoritmo de ajuste histórico que neutraliza distorções causadas por compras, divisões (splits), grupamentos e bonificações, permitindo uma análise fiel da evolução do seu capital.
 </div>
 """, unsafe_allow_html=True)
 
-ticker_input = st.sidebar.text_input("Digite o Ticker", "BBAS3").upper().strip()
+ticker_input = st.sidebar.text_input("Digite o Ticker", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período da Simulação")
 d_fim_padrao = date.today() - timedelta(days=2) 
-d_ini_padrao = d_fim_padrao - timedelta(days=365*10 + 5)
+d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
@@ -66,19 +68,27 @@ mostrar_cdi = st.sidebar.checkbox("CDI (Renda Fixa)", value=True)
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
+st.sidebar.markdown(f"""
+<div style="font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+Desenvolvido por: <br>
+<a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank" style="color: #1f77b4; text-decoration: none; font-weight: bold;">IG: Ramoon.Bastos</a>
+</div>
+""", unsafe_allow_html=True)
+
 # 3. FUNÇÕES DE SUPORTE
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s, e = d_inicio.strftime('%d/%m/%Y'), d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
-    try:
-        r = requests.get(url, timeout=30)
-        if r.status_code == 200:
-            df = pd.DataFrame(r.json())
-            df['data'] = pd.to_datetime(df['data'], dayfirst=True)
-            df['valor'] = pd.to_numeric(df['valor']) / 100
-            df = df.set_index('data')
-            return (1 + df['valor']).cumprod()
-    except: pass
+    for i in range(5):
+        try:
+            r = requests.get(url, timeout=30)
+            if r.status_code == 200:
+                df = pd.DataFrame(r.json())
+                df['data'] = pd.to_datetime(df['data'], dayfirst=True)
+                df['valor'] = pd.to_numeric(df['valor']) / 100
+                df = df.set_index('data')
+                return (1 + df['valor']).cumprod()
+        except: time.sleep(i + 1)
     return pd.Series(dtype='float64')
 
 @st.cache_data(show_spinner=False)
@@ -86,14 +96,15 @@ def carregar_dados_completos(t):
     if not t: return None
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        df = yf.download(t_sa, start="2000-01-01", progress=False, auto_adjust=False)
+        df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
-        
-        # Fator de Retorno Total (Ajustado por dividendos/splits)
-        df["Total_Return_Factor"] = (1 + df["Adj Close"].pct_change().fillna(0)).cumprod()
-        return df[['Close', 'Adj Close', 'Total_Return_Factor']]
+        df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
+        df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
+        df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
+        df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
+        return df[['Close', 'Adj Close', 'Total_Fact']]
     except: return None
 
 # 4. LOGICA PRINCIPAL
@@ -107,14 +118,13 @@ if ticker_input:
             ibov_raw = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
             if not ibov_raw.empty:
                 if isinstance(ibov_raw.columns, pd.MultiIndex): ibov_raw.columns = ibov_raw.columns.get_level_values(0)
-                df_ibov_c = (1 + ibov_raw['Close'].pct_change().fillna(0)).cumprod()
+                df_ibov_c = ibov_raw['Close']
         except: pass
 
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         if not df_v.empty:
-            # Gráfico de Retorno Total (Normalizado)
-            df_v["Total_Fact_Chart"] = df_v["Total_Return_Factor"] / df_v["Total_Return_Factor"].iloc[0]
+            df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
             df_v["Price_Base_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
@@ -124,50 +134,44 @@ if ticker_input:
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
-            
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Simulação de Patrimônio Acumulado")
             
-            # FUNÇÃO DE CÁLCULO CORRIGIDA (Individualizada por aporte)
-            def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f, d_ini_sim, d_fim_sim):
-                dt_ini_sim = pd.to_datetime(d_ini_sim)
-                dt_fim_sim = pd.to_datetime(d_fim_sim)
+            def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
+                data_limite = datetime.now() - timedelta(days=anos*365 + 15)
+                df_p = df_full[df_full.index >= data_limite].copy()
+                if len(df_p) < 5: return [0]*6
                 
-                # Garante que não tenta calcular 10 anos se o filtro for de 2
-                if (dt_fim_sim - dt_ini_sim).days / 365.25 < (anos - 0.05): return [0]*6
-
-                df_p = df_full.loc[dt_ini_sim:dt_fim_sim].copy()
                 df_p['month'] = df_p.index.to_period('M')
-                datas_aportes = df_p.groupby('month').head(1).index.tolist()[:(anos * 12)]
+                meses_idx = df_p.groupby('month').head(1).index.tolist()
+                datas = meses_idx[-(anos * 12):] 
                 
-                if not datas_aportes: return [0]*6
+                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
+                fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
+                vf_ativo = cotas * df_full["Close"].iloc[-1] * (fator_tr / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
                 
-                data_venda = df_p.index[-1]
-                patrimonio_final = 0
-                
-                # Cada aporte cresce individualmente baseado no Retorno Total (Adj Close)
-                for d in datas_aportes:
-                    fator_crescimento = df_full.loc[data_venda, "Total_Return_Factor"] / df_full.loc[d, "Total_Return_Factor"]
-                    patrimonio_final += valor_mensal * fator_crescimento
-
-                vi = len(datas_aportes) * valor_mensal
-                
-                def calc_bench(serie):
+                def calc_corrigido(serie):
                     if serie.empty: return 0
-                    v_venda = serie.asof(data_venda)
-                    return sum(valor_mensal * (v_venda / serie.asof(d)) for d in datas_aportes)
+                    return sum(valor_mensal * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas)
 
-                return patrimonio_final, vi, patrimonio_final - vi, calc_bench(s_cdi_f), calc_bench(s_ipca_f), calc_bench(s_ibov_f)
+                return vf_ativo, len(datas) * valor_mensal, vf_ativo - (len(datas) * valor_mensal), calc_corrigido(s_cdi_f), calc_corrigido(s_ipca_f), calc_corrigido(s_ibov_f)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c, data_inicio, data_fim)
+                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
                 titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
                     if vf > 0:
-                        st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="total-amount">{formata_br(vf)}</div></div>', unsafe_allow_html=True)
+                        # Card de Patrimônio Final ajustado para cores discretas
+                        st.markdown(f"""
+                        <div class="total-card">
+                            <div class="total-label">{titulo_col}</div>
+                            <div class="total-amount">{formata_br(vf)}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
                         st.markdown(f"""
                         <div class="info-card">
                             <div class="card-header">Benchmarks (Valor Corrigido)</div>
@@ -180,10 +184,23 @@ if ticker_input:
                             <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
                         </div>
                         """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div style="font-size:0.8rem; color:#94a3b8; margin-top:10px;">Período Insuficiente no Filtro</div></div>', unsafe_allow_html=True)
 
-            st.markdown("""<div class="glossario-container"><h3 style="color: #1f77b4; margin-top:0;">Guia de Termos</h3>...</div>""", unsafe_allow_html=True)
+            st.markdown("""
+<div class="glossario-container">
+<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
+<span class="glossario-termo">• CDI (Certificado de Depósito Interbancário)</span>
+<span class="glossario-def">Referência da renda fixa que representa o retorno de aplicações seguras (ex: Tesouro Selic). Serve para avaliar se o risco de investir em ações trouxe um prêmio sobre a taxa básica.</span>
+<span class="glossario-termo">• Correção IPCA (Inflação)</span>
+<span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Indica quanto você precisaria ter hoje para manter o mesmo patrimônio real do passado.</span>
+<span class="glossario-termo">• Ibovespa</span>
+<span class="glossario-def">Principal índice da bolsa brasileira, composto pelas ações com maior volume de negociação. É utilizado como benchmark para medir se a ação escolhida está superando a média do mercado nacional.</span>
+<span class="glossario-termo">• Capital Nominal Investido</span>
+<span class="glossario-def">É o somatório bruto de todos os aportes mensais que saíram do seu bolso ao longo do tempo, sem considerar juros.</span>
+<span class="glossario-termo">• Lucro Acumulado</span>
+<span class="glossario-def">Diferença entre o patrimônio atual e o capital nominal investido, especificamente para o investimento realizado nesta ação.</span>
+<span class="glossario-termo">• Retorno Total</span>
+<span class="glossario-def">Métrica definitiva que combina a valorização da cota com o reinvestimento de proventos. O cálculo neutraliza distorções causadas por compras, desdobramentos (splits), grupamentos e bonificações.</span>
+</div>""", unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
 else: st.info("💡 Digite um Ticker no menu lateral para iniciar.")
