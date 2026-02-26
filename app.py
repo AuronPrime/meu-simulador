@@ -27,8 +27,8 @@ st.sidebar.markdown("""
 <div class="instrucoes">
 1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
 2) <b>Aporte:</b> Defina o valor mensal.<br>
-3) <b>Período:</b> O padrão inicia em 10 anos.<br>
-4) <b>Filtros:</b> Compare com índices abaixo.
+3) <b>Período:</b> Escolha o intervalo desejado.<br>
+4) <b>Filtros:</b> Compare com índices reais.
 </div>
 """, unsafe_allow_html=True)
 
@@ -49,7 +49,7 @@ mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
-# 3. FUNÇÕES DE SUPORTE
+# 3. FUNÇÕES DE SUPORTE (BCB)
 def busca_indice_bcb(codigo, d_inicio, d_fim):
     s = d_inicio.strftime('%d/%m/%Y')
     e = d_fim.strftime('%d/%m/%Y')
@@ -64,34 +64,64 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
     except:
         return pd.Series(dtype='float64')
 
-@st.cache_data(show_spinner="Sincronizando Mercado...")
-def carregar_dados_completos(t):
+# 4. CARREGAMENTO COM CORREÇÃO DE DIVIDENDOS (PRECISÃO TOTAL)
+@st.cache_data(show_spinner="Calculando Retorno Real...")
+def carregar_dados_acao(t):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        tk = yf.Ticker(t_sa)
-        df = tk.history(start="2005-01-01")[['Close', 'Dividends']]
+        # Baixamos o histórico SEM ajuste para ter o preço de tela (Price_Base)
+        # E o Adj Close para ter o Retorno Total (Total_Fact)
+        df = yf.download(t_sa, start="2005-01-01", progress=False)
         if df.empty: return None
-        df.index = df.index.tz_localize(None)
-        df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
-        return df
+        
+        # Ajuste para lidar com MultiIndex do yfinance
+        if isinstance(df.columns, pd.MultiIndex):
+            df_final = pd.DataFrame({
+                'Close': df['Close'][t_sa],
+                'Adj Close': df['Adj Close'][t_sa]
+            })
+        else:
+            df_final = df[['Close', 'Adj Close']].copy()
+            
+        df_final.index = df_final.index.tz_localize(None)
+        
+        # A MÁGICA DA CORREÇÃO:
+        # Total_Fact usa o preço ajustado (dividendos reinvestidos + splits)
+        df_final["Total_Fact"] = df_final["Adj Close"] / df_final["Adj Close"].iloc[0]
+        
+        # Price_Base usa o preço de tela (apenas valorização nominal)
+        # Importante: O Yahoo ajusta o 'Close' retroativamente para Splits, 
+        # o que é correto para não ter buracos no gráfico.
+        df_final["Price_Base"] = df_final["Close"] / df_final["Close"].iloc[0]
+        
+        return df_final
     except: return None
 
-# 4. LOGICA PRINCIPAL
+# 5. LÓGICA PRINCIPAL
 if ticker_input:
-    df_acao = carregar_dados_completos(ticker_input)
+    df_acao = carregar_dados_acao(ticker_input)
     
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
+            # Rebase para o início do período selecionado
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
-            df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
+            df_v["Price_Base_Chart"] = df_v["Price_Base"] / df_v["Price_Base"].iloc[0]
             
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            
+            # Valorização (Área Azul)
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
+            
+            # Dividendos (Área Amarela - Agora calculada como a diferença real do Adj Close)
+            diff_div = (df_v["Total_Fact_Chart"] - df_v["Price_Base_Chart"]) * 100
+            fig.add_trace(go.Scatter(x=df_v.index, y=diff_div, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            
+            # Linha de Retorno Total
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
+            # Índices de Comparação
             if mostrar_cdi:
                 s_cdi = busca_indice_bcb(12, data_inicio, data_fim)
                 if not s_cdi.empty:
@@ -114,7 +144,7 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO
+            # 6. CARDS DE PATRIMÔNIO
             st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
             def calcular_patrimonio(df_full, valor_mensal, anos):
@@ -123,9 +153,10 @@ if ticker_input:
                 if len(df_calc) < 20: return 0, 0
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
-                total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
-                fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
-                valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                
+                # Cálculo via Preço Ajustado (Simula reinvestimento automático de dividendos)
+                total_cotas_ajustadas = sum(valor_mensal / df_full.loc[d, 'Adj Close'] for d in datas_aporte)
+                valor_final = total_cotas_ajustadas * df_full["Adj Close"].iloc[-1]
                 return valor_final, n_meses * valor_mensal
 
             col1, col2, col3 = st.columns(3)
@@ -137,13 +168,13 @@ if ticker_input:
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"Lucro Bruto: {formata_br(vf-vi)}")
 
-            # 6. GLOSSÁRIO DETALHADO (RESTALRADO)
+            # 7. GLOSSÁRIO DETALHADO
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores de comparação:</b><br><br>
-            • <b>CDI (Certificado de Depósito Interbancário):</b> É o principal termômetro da Renda Fixa no Brasil. Ele caminha muito próximo à taxa Selic. Se a sua ação rende menos que o CDI, significa que teria sido mais vantajoso (e seguro) deixar o dinheiro em uma conta digital ou Tesouro Selic.<br><br>
-            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É o indicador oficial da inflação. Ele mostra o quanto o custo de vida aumentou. O rendimento que ultrapassa o IPCA é chamado de "Lucro Real" (ganho de poder de compra).<br><br>
-            • <b>Ibovespa (Mercado):</b> É a carteira teórica das ações mais negociadas na bolsa brasileira (B3). Ele serve para você entender se a empresa escolhida performou melhor ou pior do que a média de mercado.
+            • <b>CDI (Certificado de Depósito Interbancário):</b> Referência da Renda Fixa. Se sua ação rende menos que o CDI, o risco da renda variável não compensou.<br><br>
+            • <b>IPCA (Inflação):</b> Mostra se seu dinheiro ganhou poder de compra real.<br><br>
+            • <b>Ibovespa (Mercado):</b> A média das principais ações da bolsa. Útil para saber se sua escolha foi melhor que a "média" do mercado.
             </div>
             """, unsafe_allow_html=True)
             
