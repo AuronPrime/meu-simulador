@@ -29,13 +29,15 @@ st.sidebar.markdown("""
 <b>Como usar:</b><br>
 1. Digite o código da ação (Ticker).<br>
 2. Defina o aporte mensal pretendido.<br>
-3. O sistema calcula o acúmulo total e o ganho real acima da inflação.
+3. Clique em <b>Analisar Patrimônio</b>.
 </div>
 """, unsafe_allow_html=True)
 
-# Deixamos o valor padrão vazio ""
-ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, WEGE3, PETR4)", "").upper().strip()
+ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, WEGE3)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Valor do aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
+
+# Botão de Start
+btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
 # 3. FUNÇÕES DE SUPORTE
 def get_bcb(codigo, d_ini, d_f, fallback):
@@ -57,13 +59,11 @@ def carregar_dados(t):
         if data.empty: return None
         data.index = data.index.tz_localize(None)
         
-        # Cálculos de Performance
         data["Price_Pct"] = (data["Close"] / data["Close"].iloc[0]) - 1
         data["Total_Fact"] = (1 + data["Close"].pct_change().fillna(0) + (data["Dividends"]/data["Close"]).fillna(0)).cumprod()
         data["Total_Pct"] = data["Total_Fact"] - 1
         data["Div_Pct"] = data["Total_Pct"] - data["Price_Pct"]
         
-        # Benchmarks
         s, e = data.index[0].strftime('%d/%m/%Y'), data.index[-1].strftime('%d/%m/%Y')
         df_ipca = get_bcb(433, s, e, 0.004)
         ipca_f = df_ipca.reindex(pd.date_range(data.index[0], data.index[-1]), method='ffill')
@@ -76,18 +76,14 @@ def carregar_dados(t):
         
         return data
     except Exception as e:
-        if "Too Many Requests" in str(e):
-            st.error("O Yahoo Finance bloqueou a requisição temporariamente por excesso de acessos. Tente novamente em alguns minutos.")
         return None
 
 # 4. LÓGICA DE EXIBIÇÃO
 if not ticker_input:
-    st.info("💡 Por favor, digite um **Ticker** na barra lateral para iniciar a simulação.")
-    st.image("https://images.unsplash.com/photo-1611974717482-58a25a3d5be4?auto=format&fit=crop&q=80&w=1000", caption="Análise histórica de ativos brasileiros", use_container_width=True)
-else:
+    st.info("💡 Por favor, digite um **Ticker** na barra lateral e clique em **Analisar Patrimônio**.")
+elif btn_analisar or ticker_input:
     df = carregar_dados(ticker_input)
     if df is not None:
-        # --- GRÁFICO ---
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df.index, y=df["Price_Pct"]*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.5)', line=dict(width=0)))
         fig.add_trace(go.Scatter(x=df.index, y=df["Div_Pct"]*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
@@ -103,7 +99,6 @@ else:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- CARDS DE RESULTADO ---
         st.subheader(f"💰 Resultado com Aportes Mensais de {formata_br(valor_aporte)}")
         
         def simular_real(df_orig, v_mes, anos):
@@ -134,4 +129,4 @@ else:
                 else:
                     st.warning(f"Dados insuficientes para {anos} anos.")
     else:
-        st.error(f"Não foi possível encontrar dados para o ticker '{ticker_input}'. Certifique-se de que o código está correto (ex: WEGE3).")
+        st.error(f"Não foi possível encontrar dados para o ticker '{ticker_input}'.")
