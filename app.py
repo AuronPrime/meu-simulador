@@ -10,10 +10,11 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; }
-    .resumo-objetivo { font-size: 0.95rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 5px solid #1f77b4; line-height: 1.6; }
-    .instrucoes { font-size: 0.85rem; color: #555; background-color: #f0f2f6; padding: 12px; border-radius: 5px; margin-bottom: 20px; border-left: 5px solid #ccc; }
-    .glossario { font-size: 0.85rem; color: #444; margin-top: 40px; border-top: 2px solid #eee; padding-top: 20px; line-height: 1.8; background-color: #f9f9f9; padding: 20px; border-radius: 10px; }
+    [data-testid="stMetricValue"] { font-size: 1.6rem; }
+    .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.4; }
+    .instrucoes { font-size: 0.8rem; color: #555; background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px; border-left: 5px solid #ccc; }
+    .comp-small { font-size: 0.75rem; color: #666; line-height: 1.2; margin-top: 2px; }
+    .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -22,33 +23,23 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL COM RESUMO E GUIA
+# 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
-<b>Objetivo:</b> Analisar o <b>Total Return</b> (Retorno Total) de um ativo, calculando o acúmulo patrimonial real através do reinvestimento de <b>Proventos (Dividendos e JCP)</b>. A ferramenta aplica algoritmos de fiscalização matemática para neutralizar distorções causadas por <b>desdobramentos (splits), grupamentos e bonificações</b>, garantindo uma simulação fiel de aportes mensais históricos.
+<b>Objetivo:</b> Analisar o <b>Total Return</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de <b>splits, grupamentos e bonificações</b> para uma simulação fiel de aportes históricos.
 </div>
 """, unsafe_allow_html=True)
 
-st.sidebar.header("Guia de Uso")
-st.sidebar.markdown("""
-<div class="instrucoes">
-1) <b>Ativo:</b> Digite o ticker (ex: ITUB4).<br>
-2) <b>Aporte:</b> Defina o valor mensal.<br>
-3) <b>Período:</b> Escolha o intervalo histórico.<br>
-4) <b>Filtros:</b> Compare com índices de mercado.
-</div>
-""", unsafe_allow_html=True)
-
-ticker_input = st.sidebar.text_input("Digite o Ticker", "").upper().strip()
+ticker_input = st.sidebar.text_input("Digite o Ticker (ex: ITUB4, BBSE3)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-st.sidebar.subheader("Período do Gráfico")
+st.sidebar.subheader("Período")
 d_fim_padrao = date.today() - timedelta(days=2) 
 d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
-st.sidebar.subheader("Comparativos")
+st.sidebar.subheader("Comparativos no Gráfico")
 mostrar_cdi = st.sidebar.checkbox("CDI (Renda Fixa)", value=True)
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
@@ -67,8 +58,7 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
         df['valor'] = pd.to_numeric(df['valor']) / 100
         df = df.set_index('data')
         return (1 + df['valor']).cumprod()
-    except:
-        return pd.Series(dtype='float64')
+    except: return pd.Series(dtype='float64')
 
 @st.cache_data(show_spinner=False)
 def carregar_dados_completos(t):
@@ -77,33 +67,31 @@ def carregar_dados_completos(t):
     try:
         df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
         if df.empty: return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
-
-        # FISCALIZAÇÃO MATEMÁTICA
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
         df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
         df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
-        
         return df[['Close', 'Adj Close', 'Total_Fact']]
     except: return None
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
-    with st.spinner(f"Sincronizando {ticker_input} e indicadores..."):
-        df_acao = carregar_dados_completos(ticker_input)
+    with st.spinner("Sincronizando dados e indicadores..."):
+        # Garantia de carregamento prioritário dos índices
         s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
-        df_ibov = pd.Series()
-        if mostrar_ibov:
-            try:
-                ibov_raw = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
-                if not ibov_raw.empty:
-                    if isinstance(ibov_raw.columns, pd.MultiIndex): ibov_raw.columns = ibov_raw.columns.get_level_values(0)
-                    df_ibov = ibov_raw['Close']
-            except: pass
+        
+        df_acao = carregar_dados_completos(ticker_input)
+        
+        df_ibov_c = pd.Series()
+        try:
+            ibov_raw = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
+            if not ibov_raw.empty:
+                if isinstance(ibov_raw.columns, pd.MultiIndex): ibov_raw.columns = ibov_raw.columns.get_level_values(0)
+                df_ibov_c = ibov_raw['Close']
+        except: pass
 
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
@@ -114,55 +102,69 @@ if ticker_input:
             
             fig = go.Figure()
 
-            # Desenho dos índices
-            if mostrar_cdi and not s_cdi.empty:
-                fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
-            if mostrar_ipca and not s_ipca.empty:
-                fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
-            if mostrar_ibov and not df_ibov.empty:
-                fig.add_trace(go.Scatter(x=df_ibov.index, y=(df_ibov/df_ibov.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
+            # Comparativos com arredondamento no hover (format=".1f")
+            if not s_cdi.empty:
+                fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash'), hovertemplate='%{y:.1f}%'))
+            if not s_ipca.empty:
+                fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2), hovertemplate='%{y:.1f}%'))
+            if not df_ibov_c.empty:
+                fig.add_trace(go.Scatter(x=df_ibov_c.index, y=(df_ibov_c/df_ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2), hovertemplate='%{y:.1f}%'))
 
-            # Áreas do Gráfico (Valorização e Proventos)
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos (Div/JCP)', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
+            # Ação
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0), hovertemplate='%{y:.1f}%'))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos (Div/JCP)', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0), hovertemplate='%{y:.1f}%'))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3), hovertemplate='%{y:.1f}%'))
 
-            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO
+            # 5. CARDS DE PATRIMÔNIO COM COMPARAÇÃO PEQUENA
             st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
-            def calcular_patrimonio(df_full, valor_mensal, anos):
+            def calcular_patrimonio_e_indices(df_full, valor_mensal, anos, s_cdi_full, s_ipca_full, s_ibov_full):
                 n_meses = anos * 12
                 df_calc = df_full.tail(n_meses * 22)
-                if len(df_calc) < 20: return 0, 0, 0
+                if len(df_calc) < 20: return [0]*6
+                
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
-                total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
-                fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
-                valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
                 investido = n_meses * valor_mensal
-                return valor_final, investido, valor_final - investido
+                
+                # Cálculo Ativo
+                total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
+                fator_reinvest = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
+                vf_ativo = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvest / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                
+                # Cálculo Índices (Soma de aportes corrigidos)
+                def calc_index(serie):
+                    if serie.empty: return 0
+                    return sum(valor_mensal * (serie.iloc[-1] / serie.loc[d]) for d in datas_aporte if d in serie.index)
+
+                return vf_ativo, investido, vf_ativo - investido, calc_index(s_cdi_full), calc_index(s_ipca_full), calc_index(s_ibov_full)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                vf, vi, lucro = calcular_patrimonio(df_acao, valor_aporte, anos)
+                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_patrimonio_e_indices(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
                 with col:
                     if vf > 0:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         st.write(f"Total Investido: {formata_br(vi)}")
                         st.caption(f"Lucro Líquido: {formata_br(lucro)}")
+                        # Pequenos comparativos abaixo
+                        st.markdown(f"""
+                        <div class="comp-small">
+                        • Se fosse em CDI: {formata_br(v_cdi)}<br>
+                        • Se fosse em IPCA: {formata_br(v_ipca)}<br>
+                        • Se fosse Ibovespa: {formata_br(v_ibov)}
+                        </div>
+                        """, unsafe_allow_html=True)
 
             # 6. GLOSSÁRIO
             st.markdown("""
             <div class="glossario">
-            📌 <b>Glossário Técnico:</b><br><br>
-            • <b>Proventos (Div/JCP):</b> Soma de Dividendos e Juros Sobre Capital Próprio reinvestidos. O cálculo utiliza o preço ajustado para capturar o rendimento real distribuído aos acionistas.<br><br>
-            • <b>Ajustes Corporativos:</b> O algoritmo neutraliza variações nominais de preço oriundas de splits ou grupamentos, impedindo lucros fictícios no histórico.<br><br>
-            • <b>CDI e IPCA:</b> Referências de custo de oportunidade e preservação de poder de compra, respectivamente.
+            📌 <b>Glossário:</b> <b>Proventos (Div/JCP)</b> engloba Dividendos e Juros Sobre Capital Próprio reinvestidos. O algoritmo trata <b>splits e grupamentos</b> automaticamente via Preço Ajustado.
             </div>
             """, unsafe_allow_html=True)
             
-    else: st.error("Erro: Ticker não encontrado ou falha na conexão.")
+    else: st.error("Erro: Ticker não encontrado.")
 else: st.info("💡 Digite um Ticker para começar.")
