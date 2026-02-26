@@ -23,12 +23,22 @@ st.title("📊 Simulador de Acúmulo de Patrimônio")
 
 # 2. BARRA LATERAL
 st.sidebar.header("Guia de Uso")
+st.sidebar.markdown("""
+<div class="instrucoes">
+1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
+2) <b>Aporte:</b> Defina o valor mensal.<br>
+3) <b>Período:</b> O padrão inicia em 10 anos.<br>
+4) <b>Filtros:</b> Compare com índices abaixo.
+</div>
+""", unsafe_allow_html=True)
+
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período do Gráfico")
 d_fim_padrao = date.today() - timedelta(days=2) 
 d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
+
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
@@ -56,35 +66,15 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
 
 @st.cache_data(show_spinner="Sincronizando Mercado...")
 def carregar_dados_completos(t):
-    if not t: return None
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        # AQUI ESTÁ O TRUQUE: yf.download em vez de yf.Ticker resolve o erro de ticker não encontrado
-        # Usamos auto_adjust=False para garantir que o Adj Close venha separado
-        df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
-        
+        tk = yf.Ticker(t_sa)
+        df = tk.history(start="2005-01-01")[['Close', 'Dividends']]
         if df.empty: return None
-        
-        # Limpeza de colunas multi-index que o Yahoo gera agora
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
         df.index = df.index.tz_localize(None)
-
-        # FISCALIZAÇÃO MATEMÁTICA (Anti-CSMG3)
-        # Retorno Total (Com dividendos e splits)
-        df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
-        # Retorno de Preço (Só tela)
-        df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
-        # Extraímos o Yield Real (Diferença que não é variação de preço)
-        df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
-
-        # Fator Acumulado Blindado
-        df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
-        
-        return df[['Close', 'Adj Close', 'Total_Fact']]
-    except Exception as e:
-        return None
+        df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
+        return df
+    except: return None
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
@@ -95,11 +85,11 @@ if ticker_input:
         
         if not df_v.empty:
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
-            df_v["Price_Base_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
+            df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
             if mostrar_cdi:
@@ -115,9 +105,10 @@ if ticker_input:
             if mostrar_ibov:
                 try:
                     ibov = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
-                    if isinstance(ibov.columns, pd.MultiIndex): ibov.columns = ibov.columns.get_level_values(0)
-                    ibov_c = ibov['Close']
-                    fig.add_trace(go.Scatter(x=ibov_c.index, y=(ibov_c/ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
+                    ibov_c = ibov['Close'].iloc[:, 0] if isinstance(ibov['Close'], pd.DataFrame) else ibov['Close']
+                    if not ibov_c.empty:
+                        ibov_c.index = ibov_c.index.tz_localize(None)
+                        fig.add_trace(go.Scatter(x=ibov_c.index, y=(ibov_c/ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
                 except: pass
 
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
@@ -146,7 +137,15 @@ if ticker_input:
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"Lucro Bruto: {formata_br(vf-vi)}")
 
-            st.markdown("""<div class="glossario">📌 <b>Comparativos:</b> O gráfico separa valorização de tela de proventos reinvestidos. O cálculo ignora distorções de splits históricos.</div>""", unsafe_allow_html=True)
+            # 6. GLOSSÁRIO DETALHADO (RESTALRADO)
+            st.markdown("""
+            <div class="glossario">
+            📌 <b>Entenda os indicadores de comparação:</b><br><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> É o principal termômetro da Renda Fixa no Brasil. Ele caminha muito próximo à taxa Selic. Se a sua ação rende menos que o CDI, significa que teria sido mais vantajoso (e seguro) deixar o dinheiro em uma conta digital ou Tesouro Selic.<br><br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É o indicador oficial da inflação. Ele mostra o quanto o custo de vida aumentou. O rendimento que ultrapassa o IPCA é chamado de "Lucro Real" (ganho de poder de compra).<br><br>
+            • <b>Ibovespa (Mercado):</b> É a carteira teórica das ações mais negociadas na bolsa brasileira (B3). Ele serve para você entender se a empresa escolhida performou melhor ou pior do que a média de mercado.
+            </div>
+            """, unsafe_allow_html=True)
             
-    else: st.error("Erro: Ticker não encontrado ou falha na conexão com o Yahoo.")
+    else: st.error("Ticker não encontrado.")
 else: st.info("💡 Digite um Ticker para começar.")
