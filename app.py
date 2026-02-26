@@ -9,22 +9,25 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS
+# Estilos CSS Restaurados
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
+    
     .total-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 12px; margin-bottom: 10px; text-align: center; min-height: 110px; display: flex; flex-direction: column; justify-content: center; }
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
-    .aviso-periodo { font-size: 0.85rem; color: #94a3b8; font-style: italic; }
+    
     .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; min-height: 280px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
     .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
-    .glossario-container { margin-top: 40px; padding: 25 : background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
+    
+    .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
+    .aviso-periodo { font-size: 0.85rem; color: #94a3b8; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -33,20 +36,20 @@ def formata_br(valor):
 
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL
+# 2. BARRA LATERAL - TEXTO RESTAURADO
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
-O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP).
+O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP). Para garantir precisão técnica, utilizamos um algoritmo de ajuste histórico que neutraliza distorções causadas por compras, divisões (splits), grupamentos e bonificações, permitindo uma análise fiel da evolução do seu capital.
 </div>
 """, unsafe_allow_html=True)
 
 ticker_input = st.sidebar.text_input("Digite o Ticker", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-# Sugestão de datas: 10 anos exatos para garantir análise completa
+# Sugestão de datas com margem para garantir os 10 anos
 d_fim_sugestao = date.today() - timedelta(days=2) 
-d_ini_sugestao = d_fim_sugestao - timedelta(days=365*10 + 2) # +2 para margem de segurança
+d_ini_sugestao = d_fim_sugestao - timedelta(days=365*10 + 5) 
 
 data_inicio = st.sidebar.date_input("Início", d_ini_sugestao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_sugestao, format="DD/MM/YYYY")
@@ -111,8 +114,9 @@ if ticker_input:
             st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Simulação de Patrimônio Acumulado")
-            st.caption(f"Cálculos realizados retroativamente a partir de {data_fim.strftime('%d/%m/%Y')}")
+            st.caption(f"Cálculos baseados em aportes mensais finalizando em {data_fim.strftime('%d/%m/%Y')}")
 
+            # FUNÇÃO DE CÁLCULO DINÂMICO COM IBOVESPA RESTAURADO
             def calcular_janela_movel(df_full, v_aporte, anos, d_fim_alvo, d_inicio_limite):
                 d_inicio_janela = pd.to_datetime(d_fim_alvo) - pd.DateOffset(years=anos)
                 if d_inicio_janela < pd.to_datetime(d_inicio_limite) or d_inicio_janela < df_full.index[0]:
@@ -122,19 +126,31 @@ if ticker_input:
                 df_janela['month'] = df_janela.index.to_period('M')
                 datas_aportes = df_janela.groupby('month').head(1).index.tolist()
                 
+                # Ação
                 cotas = sum(v_aporte / df_full.loc[d, 'Close'] for d in datas_aportes)
                 fator_tr = df_full.loc[pd.to_datetime(d_fim_alvo), "Total_Fact"] / df_full.loc[datas_aportes[0], "Total_Fact"]
                 vf_ativo = cotas * df_full.loc[pd.to_datetime(d_fim_alvo), 'Close'] * (fator_tr / (df_full.loc[pd.to_datetime(d_fim_alvo), 'Close'] / df_full.loc[datas_aportes[0], 'Close']))
                 
+                # Benchmarks
                 s_cdi = busca_indice_bcb(12, d_inicio_janela, d_fim_alvo)
                 s_ipca = busca_indice_bcb(433, d_inicio_janela, d_fim_alvo)
                 
+                ibov_vf = 0
+                try:
+                    ibov = yf.download("^BVSP", start=d_inicio_janela, end=pd.to_datetime(d_fim_alvo)+timedelta(days=1), progress=False)
+                    if not ibov.empty:
+                        if isinstance(ibov.columns, pd.MultiIndex): ibov.columns = ibov.columns.get_level_values(0)
+                        ibov_vf = sum(v_aporte * (ibov['Close'].iloc[-1] / ibov.loc[ibov.index.asof(d), 'Close']) for d in datas_aportes)
+                except: pass
+
                 def calc_ref(serie):
                     if serie.empty: return 0
-                    idx = serie.index.get_indexer([datas_aportes[0]], method='backfill')[0]
                     return sum(v_aporte * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas_aportes)
 
-                return {"vf": vf_ativo, "vi": len(datas_aportes) * v_aporte, "lucro": vf_ativo - (len(datas_aportes) * v_aporte), "cdi": calc_ref(s_cdi), "ipca": calc_ref(s_ipca)}
+                return {
+                    "vf": vf_ativo, "vi": len(datas_aportes) * v_aporte, "lucro": vf_ativo - (len(datas_aportes) * v_aporte),
+                    "cdi": calc_ref(s_cdi), "ipca": calc_ref(s_ipca), "ibov": ibov_vf
+                }
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
@@ -143,20 +159,39 @@ if ticker_input:
                 with col:
                     if res:
                         st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="total-amount">{formata_br(res["vf"])}</div></div>', unsafe_allow_html=True)
-                        st.markdown(f'<div class="info-card"><div class="card-header">Benchmarks na Janela</div><div class="card-item">🎯 <b>CDI:</b> {formata_br(res["cdi"])}</div><div class="card-item">🛡️ <b>IPCA:</b> {formata_br(res["ipca"])}</div><hr><div class="card-header">Análise</div><div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(res["vi"])}</div><div class="card-destaque">💰 Lucro: {formata_br(res["lucro"])}</div></div>', unsafe_allow_html=True)
+                        st.markdown(f"""
+                        <div class="info-card">
+                            <div class="card-header">Benchmarks na Janela</div>
+                            <div class="card-item">🎯 <b>CDI:</b> {formata_br(res["cdi"])}</div>
+                            <div class="card-item">📈 <b>Ibovespa:</b> {formata_br(res["ibov"])}</div>
+                            <div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(res["ipca"])}</div>
+                            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+                            <div class="card-header">Análise da Carteira</div>
+                            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(res["vi"])}</div>
+                            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(res["lucro"])}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
                     else:
                         st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="aviso-periodo">Período Insuficiente</div></div>', unsafe_allow_html=True)
+                        st.markdown('<div class="info-card"><div class="aviso-periodo">Aumente o intervalo de datas no menu lateral para habilitar esta janela de tempo.</div></div>', unsafe_allow_html=True)
 
-            st.markdown("""<div class="glossario-container">
-                <h3 style="color: #1f77b4;">Guia de Termos e Indicadores</h3>
-                <span class="glossario-termo">• CDI (Certificado de Depósito Interbancário)</span>
-                <span class="glossario-def">Referência da renda fixa. Serve para avaliar se o risco em ações trouxe prêmio sobre a taxa básica.</span>
-                <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-                <span class="glossario-def">Atualiza o valor para o poder de compra atual.</span>
-                <span class="glossario-termo">• Capital Nominal Investido</span>
-                <span class="glossario-def">Somatório bruto de todos os aportes mensais realizados.</span>
-                <span class="glossario-termo">• Retorno Total</span>
-                <span class="glossario-def">Combina valorização e dividendos, neutralizando splits e agrupamentos.</span>
-            </div>""", unsafe_allow_html=True)
+            # GUIA DE TERMOS TOTALMENTE RESTAURADO
+            st.markdown("""
+<div class="glossario-container">
+<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
+<span class="glossario-termo">• CDI (Certificado de Depósito Interbancário)</span>
+<span class="glossario-def">Referência da renda fixa que representa o retorno de aplicações seguras (ex: Tesouro Selic). Serve para avaliar se o risco de investir em ações trouxe um prêmio sobre a taxa básica.</span>
+<span class="glossario-termo">• Correção IPCA (Inflação)</span>
+<span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Indica quanto você precisaria ter hoje para manter o mesmo patrimônio real do passado.</span>
+<span class="glossario-termo">• Ibovespa</span>
+<span class="glossario-def">Principal índice da bolsa brasileira, composto pelas ações com maior volume de negociação. É utilizado como benchmark para medir se a ação escolhida está superando a média do mercado nacional.</span>
+<span class="glossario-termo">• Capital Nominal Investido</span>
+<span class="glossario-def">É o somatório bruto de todos os aportes mensais que saíram do seu bolso ao longo do tempo, sem considerar juros.</span>
+<span class="glossario-termo">• Lucro Acumulado</span>
+<span class="glossario-def">Diferença entre o patrimônio atual e o capital nominal investido, especificamente para o investimento realizado nesta ação.</span>
+<span class="glossario-termo">• Retorno Total</span>
+<span class="glossario-def">Métrica definitiva que combina a valorização da cota com o reinvestimento de proventos. O cálculo neutraliza distorções causadas por compras, desdobramentos (splits), grupamentos e bonificações.</span>
+</div>""", unsafe_allow_html=True)
+            
     else: st.error("Ticker não encontrado.")
 else: st.info("💡 Digite um Ticker no menu lateral para iniciar a análise.")
