@@ -9,7 +9,7 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Preservados exatamente como solicitado
+# Estilos CSS - Design original preservado
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
@@ -99,10 +99,11 @@ def carregar_dados_completos(t):
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
+        
+        # Lógica de Retorno Total precisa
         df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
-        df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
-        df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
-        df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
+        df["Total_Fact"] = (1 + df["Ret_Total"]).cumprod()
+        
         return df[['Close', 'Adj Close', 'Total_Fact']]
     except: return None
 
@@ -117,12 +118,14 @@ if ticker_input:
             ibov_raw = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
             if not ibov_raw.empty:
                 if isinstance(ibov_raw.columns, pd.MultiIndex): ibov_raw.columns = ibov_raw.columns.get_level_values(0)
-                df_ibov_c = ibov_raw['Close']
+                # Ibov acumulado para benchmark (SGS style)
+                df_ibov_c = (1 + ibov_raw['Close'].pct_change().fillna(0)).cumprod()
         except: pass
 
     if df_acao is not None:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         if not df_v.empty:
+            # Gráfico de Retorno Total
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
             df_v["Price_Base_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
             
@@ -133,51 +136,43 @@ if ticker_input:
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
+            
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Simulação de Patrimônio Acumulado")
             
-            # 1 - NOVA LOGICA QUE RESPEITA A DATA DE INICIO DA SIMULAÇÃO
+            # FUNÇÃO DE CÁLCULO CORRIGIDA (Progressiva e sem erro de duplicidade)
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f, d_ini_sim, d_fim_sim):
-                dt_inicio_limite = pd.to_datetime(d_ini_sim)
-                dt_fim_limite = pd.to_datetime(d_fim_sim)
+                dt_ini = pd.to_datetime(d_ini_sim)
+                dt_fim = pd.to_datetime(d_fim_sim)
+                df_p = df_full.loc[dt_ini:dt_fim].copy()
                 
-                # Pega os dados dentro do que o usuário filtrou
-                df_p = df_full.loc[dt_inicio_limite:dt_fim_limite].copy()
-                
-                # Trava de segurança: Se o período total selecionado for menor que os anos do card
-                delta_anos = (dt_fim_limite - dt_inicio_limite).days / 365.25
-                if delta_anos < anos:
-                    return [0]*6
+                # Trava de Segurança
+                if (dt_fim - dt_ini).days / 365.25 < (anos - 0.05): return [0]*6
 
                 df_p['month'] = df_p.index.to_period('M')
                 meses_idx = df_p.groupby('month').head(1).index.tolist()
+                datas_aportes = meses_idx[:(anos * 12)]
                 
-                # Pega os primeiros 'anos * 12' meses a partir do início da simulação
-                datas = meses_idx[:(anos * 12)]
-                if not datas: return [0]*6
+                if not datas_aportes: return [0]*6
                 
-                # Data da última cotação para o cálculo final do card
                 data_venda = df_p.index[-1]
+                patrimonio_final = 0
+                capital_investido = len(datas_aportes) * valor_mensal
                 
-                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
-                fator_tr = df_full.loc[data_venda, "Total_Fact"] / df_full.loc[datas[0], "Total_Fact"]
-                vf_ativo = cotas * df_full.loc[data_venda, "Close"] * (fator_tr / (df_full.loc[data_venda, "Close"] / df_full.loc[datas[0], "Close"]))
-                
-                def calc_corrigido(serie, datas_aportes, d_venda):
+                # Cálculo de Retorno Total Real por Aporte
+                for d in datas_aportes:
+                    fator = df_full.loc[data_venda, "Total_Fact"] / df_full.loc[d, "Total_Fact"]
+                    patrimonio_final += valor_mensal * fator
+
+                # Cálculo de Benchmarks
+                def calc_bench(serie, datas, dv):
                     if serie.empty: return 0
-                    # Garante que temos o índice da data de venda na série
-                    idx_venda = serie.index.get_indexer([d_venda], method='pad')[0]
-                    return sum(valor_mensal * (serie.iloc[idx_venda] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas_aportes)
+                    val_venda = serie.asof(dv)
+                    return sum(valor_mensal * (val_venda / serie.asof(d)) for d in datas)
 
-                # Cálculo para o Ibovespa (Benchmark de mercado)
-                v_ibov = 0
-                if not s_ibov_f.empty:
-                    idx_venda_ibov = s_ibov_f.index.get_indexer([data_venda], method='pad')[0]
-                    v_ibov = sum(valor_mensal * (s_ibov_f.iloc[idx_venda_ibov] / s_ibov_f.iloc[s_ibov_f.index.get_indexer([d], method='backfill')[0]]) for d in datas)
-
-                return vf_ativo, len(datas) * valor_mensal, vf_ativo - (len(datas) * valor_mensal), calc_corrigido(s_cdi_f, datas, data_venda), calc_corrigido(s_ipca_f, datas, data_venda), v_ibov
+                return patrimonio_final, capital_investido, patrimonio_final - capital_investido, calc_bench(s_cdi_f, datas_aportes, data_venda), calc_bench(s_ipca_f, datas_aportes, data_venda), calc_bench(s_ibov_f, datas_aportes, data_venda)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
@@ -185,13 +180,7 @@ if ticker_input:
                 titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
                     if vf > 0:
-                        st.markdown(f"""
-                        <div class="total-card">
-                            <div class="total-label">{titulo_col}</div>
-                            <div class="total-amount">{formata_br(vf)}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
+                        st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="total-amount">{formata_br(vf)}</div></div>', unsafe_allow_html=True)
                         st.markdown(f"""
                         <div class="info-card">
                             <div class="card-header">Benchmarks (Valor Corrigido)</div>
@@ -205,15 +194,7 @@ if ticker_input:
                         </div>
                         """, unsafe_allow_html=True)
                     else:
-                        st.markdown(f"""
-                        <div class="total-card">
-                            <div class="total-label">{titulo_col}</div>
-                            <div class="aviso-periodo">Período Insuficiente no filtro</div>
-                        </div>
-                        <div class="info-card">
-                            <div class="aviso-periodo">Aumente o intervalo de datas para ver a simulação de {anos} anos.</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        st.markdown(f'<div class="total-card"><div class="total-label">{titulo_col}</div><div class="aviso-periodo">Período Insuficiente</div></div>', unsafe_allow_html=True)
 
             st.markdown("""
 <div class="glossario-container">
