@@ -49,22 +49,20 @@ mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=False)
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
-# 3. FUNÇÕES DE SUPORTE (COM CORREÇÃO DE API)
+# 3. FUNÇÕES DE SUPORTE
 def get_bcb(codigo, d_ini, d_f):
-    # Nova regra da API do BC: usar formato de data DD/MM/YYYY
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={d_ini}&dataFinal={d_f}"
     try:
-        response = requests.get(url, timeout=20)
+        response = requests.get(url, timeout=15)
         if response.status_code == 200:
-            res = response.json()
-            if not res: return pd.DataFrame()
-            df_res = pd.DataFrame(res)
-            df_res['valor'] = pd.to_numeric(df_res['valor']) / 100
-            df_res['data'] = pd.to_datetime(df_res['data'], dayfirst=True)
-            return df_res.set_index('data')
+            data = response.json()
+            if not data: return pd.DataFrame()
+            df = pd.DataFrame(data)
+            df['valor'] = pd.to_numeric(df['valor']) / 100
+            df['data'] = pd.to_datetime(df['data'], dayfirst=True)
+            return df.set_index('data')
     except:
-        pass
-    return pd.DataFrame()
+        return pd.DataFrame()
 
 @st.cache_data(show_spinner="Sincronizando índices oficiais...")
 def carregar_tudo(t, d_ini, d_fim):
@@ -76,23 +74,23 @@ def carregar_tudo(t, d_ini, d_fim):
         df = df_hist[['Close']].copy()
         df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
         df.index = df.index.tz_localize(None)
-        
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         
+        # Datas para o BCB
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
         
-        # IPCA
-        df_ipca_raw = get_bcb(433, s, e)
-        if not df_ipca_raw.empty:
-            last_ipca = df_ipca_raw.index.max()
-            ipca_f = df_ipca_raw.reindex(pd.date_range(df.index[0], last_ipca), method='ffill')
+        # IPCA (Série 433)
+        df_ipca = get_bcb(433, s, e)
+        if not df_ipca.empty:
+            last_ipca = df_ipca.index.max()
+            ipca_f = df_ipca.reindex(pd.date_range(df.index[0], last_ipca), method='ffill')
             df["IPCA_Fact"] = (1 + (ipca_f['valor']/21)).cumprod().reindex(df.index)
         
-        # CDI
-        df_cdi_raw = get_bcb(12, s, e)
-        if not df_cdi_raw.empty:
-            last_cdi = df_cdi_raw.index.max()
-            cdi_f = df_cdi_raw.reindex(pd.date_range(df.index[0], last_cdi), method='ffill')
+        # CDI (Série 12)
+        df_cdi = get_bcb(12, s, e)
+        if not df_cdi.empty:
+            last_cdi = df_cdi.index.max()
+            cdi_f = df_cdi.reindex(pd.date_range(df.index[0], last_cdi), method='ffill')
             df["CDI_Fact"] = (1 + cdi_f['valor']).cumprod().reindex(df.index)
 
         # Ibovespa
@@ -109,16 +107,15 @@ def carregar_tudo(t, d_ini, d_fim):
 
 # 4. LÓGICA DE EXIBIÇÃO
 if not ticker_input:
-    st.info("💡 Digite um **Ticker** para ver os dados de 2026.")
+    st.info("💡 Digite um **Ticker** na barra lateral para começar.")
 elif btn_analisar or ticker_input:
     df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
     if df_completo is not None:
         df_v = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
-            # Rebase
-            cols = ["Total_Fact", "IPCA_Fact", "CDI_Fact", "IBOV_Fact"]
-            for col in cols:
+            # Rebase dos fatores para o início do período
+            for col in ["Total_Fact", "IPCA_Fact", "CDI_Fact", "IBOV_Fact"]:
                 if col in df_v.columns:
                     valid = df_v[col].dropna()
                     if not valid.empty:
@@ -147,7 +144,7 @@ elif btn_analisar or ticker_input:
             st.plotly_chart(fig, use_container_width=True)
 
             # 5. CARDS DE RESULTADO
-            st.subheader(f"💰 Patrimônio em Fev/2026 - Aportes de {formata_br(valor_aporte)}")
+            st.subheader(f"💰 Patrimônio com Aportes Mensais de {formata_br(valor_aporte)}")
             def simular_historico(df_orig, v_mes, anos):
                 n_meses = anos * 12
                 df_rec = df_orig.tail(n_meses * 21)
@@ -172,8 +169,16 @@ elif btn_analisar or ticker_input:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"📈 Lucro Real: {formata_br(lr)}")
-                    else: st.warning(f"Sem dados.")
-            
-            st.markdown('<div class="glossario">📌 Dados sincronizados: CDI e IPCA incluem jan/2026. Fev/2026 será incluído assim que o dado oficial for publicado.</div>', unsafe_allow_html=True)
-        else: st.error("Sem dados no período.")
-    else: st.error(f"Ticker '{ticker_input}' inválido.")
+                    else: st.warning(f"Sem dados de {anos} anos.")
+
+            # GLOSSÁRIO RESTAURADO
+            st.markdown("""
+            <div class="glossario">
+            📌 <b>Entenda os indicadores:</b><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> Representa o rendimento médio da Renda Fixa pós-fixada. É a referência mínima para um investidor conservador.<br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É a medida oficial da inflação no Brasil. Quando seu lucro real é positivo, significa que seu dinheiro ganhou poder de compra.<br>
+            • <b>Ibovespa:</b> O principal índice da B3, composto pelas empresas mais negociadas. Serve para avaliar se sua escolha de ação superou a média do mercado brasileiro.
+            </div>
+            """, unsafe_allow_html=True)
+        else: st.error("Sem dados para o período.")
+    else: st.error(f"Ticker '{ticker_input}' não encontrado.")
