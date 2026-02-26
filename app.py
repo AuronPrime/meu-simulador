@@ -12,7 +12,7 @@ st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; }
     .instrucoes { font-size: 0.85rem; color: #555; background-color: #f0f2f6; padding: 12px; border-radius: 5px; margin-bottom: 20px; border-left: 5px solid #ccc; }
-    .glossario { font-size: 0.8rem; color: #777; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; line-height: 1.6; }
+    .glossario { font-size: 0.85rem; color: #444; margin-top: 40px; border-top: 2px solid #eee; padding-top: 20px; line-height: 1.8; background-color: #f9f9f9; padding: 20px; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -72,7 +72,6 @@ def carregar_dados_completos(t):
         df = tk.history(start="2005-01-01")[['Close', 'Dividends']]
         if df.empty: return None
         df.index = df.index.tz_localize(None)
-        # Fator Retorno Total (Coração da simulação)
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         return df
     except: return None
@@ -85,7 +84,6 @@ if ticker_input:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
-            # Rebase para o Gráfico
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
             df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
             
@@ -107,37 +105,27 @@ if ticker_input:
             if mostrar_ibov:
                 try:
                     ibov = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
-                    # Tratamento para garantir que pegamos a coluna correta independente do formato
                     ibov_c = ibov['Close'].iloc[:, 0] if isinstance(ibov['Close'], pd.DataFrame) else ibov['Close']
                     if not ibov_c.empty:
                         ibov_c.index = ibov_c.index.tz_localize(None)
                         fig.add_trace(go.Scatter(x=ibov_c.index, y=(ibov_c/ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
                 except: pass
 
-            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20))
+            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO (RESTALRADOS)
+            # 5. CARDS DE PATRIMÔNIO
             st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
             def calcular_patrimonio(df_full, valor_mensal, anos):
                 n_meses = anos * 12
-                # Pegamos os últimos meses disponíveis
-                df_calc = df_full.tail(n_meses * 22) # Aproximação de dias úteis
+                df_calc = df_full.tail(n_meses * 22)
                 if len(df_calc) < 20: return 0, 0
-                
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
-                
-                total_cotas = 0
-                for d in datas_aporte:
-                    preco = df_full.loc[d, 'Close']
-                    total_cotas += valor_mensal / preco
-                
-                # O valor final considera o crescimento total (preço + dividendos reinvestidos)
+                total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
                 fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
                 valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
-                
                 return valor_final, n_meses * valor_mensal
 
             col1, col2, col3 = st.columns(3)
@@ -146,11 +134,18 @@ if ticker_input:
                 with col:
                     if vf > 0:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
-                        st.caption(f"Total Investido: {formata_br(vi)}")
-                        st.caption(f"Lucro: {formata_br(vf-vi)}")
+                        st.write(f"Investido: {formata_br(vi)}")
+                        st.caption(f"Lucro Bruto: {formata_br(vf-vi)}")
 
-            # GLOSSÁRIO
-            st.markdown("""<div class="glossario">📌 <b>Indicadores:</b> CDI (Renda Fixa), IPCA (Inflação) e Ibovespa (Bolsa Brasileira).</div>""", unsafe_allow_html=True)
+            # 6. GLOSSÁRIO DETALHADO (RESTALRADO)
+            st.markdown("""
+            <div class="glossario">
+            📌 <b>Entenda os indicadores de comparação:</b><br><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> É o principal termômetro da Renda Fixa no Brasil. Ele caminha muito próximo à taxa Selic. Se a sua ação rende menos que o CDI, significa que teria sido mais vantajoso (e seguro) deixar o dinheiro em uma conta digital ou Tesouro Selic.<br><br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É o indicador oficial da inflação. Ele mostra o quanto o custo de vida aumentou. O rendimento que ultrapassa o IPCA é chamado de "Lucro Real" (ganho de poder de compra).<br><br>
+            • <b>Ibovespa (Mercado):</b> É a carteira teórica das ações mais negociadas na bolsa brasileira (B3). Ele serve para você entender se a empresa escolhida performou melhor ou pior do que a média de mercado.
+            </div>
+            """, unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
 else: st.info("💡 Digite um Ticker para começar.")
