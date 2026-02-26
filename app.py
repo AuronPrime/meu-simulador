@@ -9,13 +9,12 @@ import time
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Ajustados para maior discrição e padronização
+# Estilos CSS - Preservados exatamente como solicitado
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.6; }
     
-    /* Card de Destaque - Agora mais discreto, combinando com os de baixo */
     .total-card { 
         background-color: #f8fafc; 
         border: 1px solid #e2e8f0; 
@@ -27,7 +26,6 @@ st.markdown("""
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
-    /* Cards de Detalhes */
     .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
@@ -36,6 +34,7 @@ st.markdown("""
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
+    .aviso-periodo { font-size: 0.85rem; color: #94a3b8; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -57,7 +56,7 @@ valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, valu
 
 st.sidebar.subheader("Período da Simulação")
 d_fim_padrao = date.today() - timedelta(days=2) 
-d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
+d_ini_padrao = d_fim_padrao - timedelta(days=365*10 + 5) # Datas inteligentes
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
@@ -96,7 +95,7 @@ def carregar_dados_completos(t):
     if not t: return None
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        df = yf.download(t_sa, start="2005-01-01", progress=False, auto_adjust=False)
+        df = yf.download(t_sa, start="2000-01-01", progress=False, auto_adjust=False)
         if df.empty: return None
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df.index = df.index.tz_localize(None)
@@ -139,32 +138,53 @@ if ticker_input:
 
             st.subheader("Simulação de Patrimônio Acumulado")
             
-            def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
-                data_limite = datetime.now() - timedelta(days=anos*365 + 15)
-                df_p = df_full[df_full.index >= data_limite].copy()
-                if len(df_p) < 5: return [0]*6
+            # 1 - NOVA LOGICA QUE RESPEITA A DATA DE INICIO DA SIMULAÇÃO
+            def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f, d_ini_sim, d_fim_sim):
+                dt_inicio_limite = pd.to_datetime(d_ini_sim)
+                dt_fim_limite = pd.to_datetime(d_fim_sim)
                 
+                # Pega os dados dentro do que o usuário filtrou
+                df_p = df_full.loc[dt_inicio_limite:dt_fim_limite].copy()
+                
+                # Trava de segurança: Se o período total selecionado for menor que os anos do card
+                delta_anos = (dt_fim_limite - dt_inicio_limite).days / 365.25
+                if delta_anos < anos:
+                    return [0]*6
+
                 df_p['month'] = df_p.index.to_period('M')
                 meses_idx = df_p.groupby('month').head(1).index.tolist()
-                datas = meses_idx[-(anos * 12):] 
+                
+                # Pega os primeiros 'anos * 12' meses a partir do início da simulação
+                datas = meses_idx[:(anos * 12)]
+                if not datas: return [0]*6
+                
+                # Data da última cotação para o cálculo final do card
+                data_venda = df_p.index[-1]
                 
                 cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
-                fator_tr = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
-                vf_ativo = cotas * df_full["Close"].iloc[-1] * (fator_tr / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
+                fator_tr = df_full.loc[data_venda, "Total_Fact"] / df_full.loc[datas[0], "Total_Fact"]
+                vf_ativo = cotas * df_full.loc[data_venda, "Close"] * (fator_tr / (df_full.loc[data_venda, "Close"] / df_full.loc[datas[0], "Close"]))
                 
-                def calc_corrigido(serie):
+                def calc_corrigido(serie, datas_aportes, d_venda):
                     if serie.empty: return 0
-                    return sum(valor_mensal * (serie.iloc[-1] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas)
+                    # Garante que temos o índice da data de venda na série
+                    idx_venda = serie.index.get_indexer([d_venda], method='pad')[0]
+                    return sum(valor_mensal * (serie.iloc[idx_venda] / serie.iloc[serie.index.get_indexer([d], method='backfill')[0]]) for d in datas_aportes)
 
-                return vf_ativo, len(datas) * valor_mensal, vf_ativo - (len(datas) * valor_mensal), calc_corrigido(s_cdi_f), calc_corrigido(s_ipca_f), calc_corrigido(s_ibov_f)
+                # Cálculo para o Ibovespa (Benchmark de mercado)
+                v_ibov = 0
+                if not s_ibov_f.empty:
+                    idx_venda_ibov = s_ibov_f.index.get_indexer([data_venda], method='pad')[0]
+                    v_ibov = sum(valor_mensal * (s_ibov_f.iloc[idx_venda_ibov] / s_ibov_f.iloc[s_ibov_f.index.get_indexer([d], method='backfill')[0]]) for d in datas)
+
+                return vf_ativo, len(datas) * valor_mensal, vf_ativo - (len(datas) * valor_mensal), calc_corrigido(s_cdi_f, datas, data_venda), calc_corrigido(s_ipca_f, datas, data_venda), v_ibov
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
+                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c, data_inicio, data_fim)
                 titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
                 with col:
                     if vf > 0:
-                        # Card de Patrimônio Final ajustado para cores discretas
                         st.markdown(f"""
                         <div class="total-card">
                             <div class="total-label">{titulo_col}</div>
@@ -182,6 +202,16 @@ if ticker_input:
                             <div class="card-header">Análise da Carteira</div>
                             <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
                             <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""
+                        <div class="total-card">
+                            <div class="total-label">{titulo_col}</div>
+                            <div class="aviso-periodo">Período Insuficiente no filtro</div>
+                        </div>
+                        <div class="info-card">
+                            <div class="aviso-periodo">Aumente o intervalo de datas para ver a simulação de {anos} anos.</div>
                         </div>
                         """, unsafe_allow_html=True)
 
