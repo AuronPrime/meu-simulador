@@ -23,12 +23,22 @@ st.title("📊 Simulador de Acúmulo de Patrimônio")
 
 # 2. BARRA LATERAL
 st.sidebar.header("Guia de Uso")
+st.sidebar.markdown("""
+<div class="instrucoes">
+1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
+2) <b>Aporte:</b> Defina o valor mensal.<br>
+3) <b>Período:</b> O padrão inicia em 10 anos.<br>
+4) <b>Filtros:</b> Compare com índices abaixo.
+</div>
+""", unsafe_allow_html=True)
+
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período do Gráfico")
 d_fim_padrao = date.today() - timedelta(days=2) 
 d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
+
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
@@ -58,31 +68,33 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
 def carregar_dados_completos(t):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
+        # Baixamos os dados brutos (history) e os ajustados (download)
         tk = yf.Ticker(t_sa)
-        # Pegamos as ações (Splits/Dividends) e Preços
-        df = tk.history(start="2005-01-01")
-        if df.empty: return None
-        df.index = df.index.tz_localize(None)
+        df_hist = tk.history(start="2005-01-01")[['Close']]
+        df_adj = yf.download(t_sa, start="2005-01-01", progress=False)[['Adj Close']]
+        
+        if df_hist.empty or df_adj.empty: return None
+        
+        # Alinhamento de datas e limpeza de fuso horário
+        df_hist.index = df_hist.index.tz_localize(None)
+        df_adj.index = df_adj.index.tz_localize(None)
+        df = df_hist.join(df_adj, how='inner')
 
-        # --- NOVA LÓGICA DE CÁLCULO (BLINDAGEM) ---
-        # 1. Ajustamos o dividendo pelo Stock Splits (evita o erro da CSMG3)
-        # O Yahoo ajusta o preço Close, mas nem sempre o Dividends da tabela.
-        # Criamos um fator de correção manual se detectarmos yield impossível.
-        df['Yield_Temp'] = df['Dividends'] / df['Close']
-        df.loc[df['Yield_Temp'] > 0.20, 'Dividends'] = 0 # Trava de segurança 20%
+        # --- FISCALIZAÇÃO MATEMÁTICA ---
+        # 1. Retorno Total Diário (Preço + Dividendos + Splits já processados pelo mercado)
+        df["Ret_Total"] = df["Adj Close"].pct_change().fillna(0)
         
-        # 2. Calculamos o retorno diário considerando a reinvestimento
-        # Retorno = (Preço_hoje + Dividendo_hoje) / Preço_ontem
-        df['Retorno_Diario'] = (df['Close'] + df['Dividends']) / df['Close'].shift(1)
-        df['Retorno_Diario'] = df['Retorno_Diario'].fillna(1)
+        # 2. Retorno de Preço Puro (Nominal / Tela)
+        df["Ret_Preco"] = df["Close"].pct_change().fillna(0)
         
-        # 3. Fator acumulado (Isso é o Retorno Total real)
-        df["Total_Fact"] = df['Retorno_Diario'].cumprod()
+        # 3. Yield Real Extraído (O que sobrou do Ret_Total que não é Ret_Preco)
+        # Isso ignora automaticamente saltos de Split porque o Adj Close e o Close caem juntos.
+        df["Yield_Fiscalizado"] = (df["Ret_Total"] - df["Ret_Preco"]).apply(lambda x: x if x > 0 else 0)
+
+        # 4. Cálculo do Fator Acumulado Blindado
+        df["Total_Fact"] = (1 + df["Ret_Preco"] + df["Yield_Fiscalizado"]).cumprod()
         
-        # 4. Fator de preço puro (Sem dividendos)
-        df["Price_Base"] = df["Close"] / df["Close"].iloc[0]
-        
-        return df[['Close', 'Dividends', 'Total_Fact', 'Price_Base']]
+        return df
     except: return None
 
 # 4. LOGICA PRINCIPAL
@@ -93,25 +105,29 @@ if ticker_input:
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
-            # Rebase para o início do período selecionado
+            # Rebase dos fatores para o início do gráfico
             df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
-            df_v["Price_Base_Chart"] = df_v["Price_Base"] / df_v["Price_Base"].iloc[0]
+            df_v["Price_Base_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
-            # Áreas: Valorização e Dividendos
+            # Área de Valorização (Azul)
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
+            # Área de Dividendos (Amarela - Agora Fiscalizada)
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            # Linha Total
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
-            # Comparativos
+            # Comparativos Estáveis
             if mostrar_cdi:
                 s_cdi = busca_indice_bcb(12, data_inicio, data_fim)
                 if not s_cdi.empty:
                     fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
+
             if mostrar_ipca:
                 s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
                 if not s_ipca.empty:
                     fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
+
             if mostrar_ibov:
                 try:
                     ibov = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
@@ -133,9 +149,9 @@ if ticker_input:
                 if len(df_calc) < 20: return 0, 0
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
-                # Compra cotas baseadas no preço de tela
+                # Compra cotas pelo preço de tela (nominal)
                 total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
-                # O fator de reinvestimento corrige o valor final considerando os dividendos acumulados desde o aporte
+                # O fator_reinvestimento usa o Total_Fact (que já limpamos de erros)
                 fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
                 valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
                 return valor_final, n_meses * valor_mensal
@@ -149,8 +165,15 @@ if ticker_input:
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"Lucro Bruto: {formata_br(vf-vi)}")
 
-            # 6. GLOSSÁRIO
-            st.markdown("""<div class="glossario">📌 <b>Indicadores:</b> CDI (Renda Fixa), IPCA (Inflação) e Ibovespa (Mercado). O gráfico separa valorização pura de dividendos reinvestidos.</div>""", unsafe_allow_html=True)
+            # 6. GLOSSÁRIO DETALHADO
+            st.markdown("""
+            <div class="glossario">
+            📌 <b>Entenda os indicadores de comparação:</b><br><br>
+            • <b>CDI:</b> Referência de Renda Fixa. Se a ação rende menos, o risco não compensou.<br><br>
+            • <b>IPCA:</b> Inflação oficial. O que ultrapassa isso é lucro real.<br><br>
+            • <b>Ibovespa:</b> Média do mercado. Útil para comparar o desempenho relativo da sua escolha.
+            </div>
+            """, unsafe_allow_html=True)
             
     else: st.error("Ticker não encontrado.")
 else: st.info("💡 Digite um Ticker para começar.")
