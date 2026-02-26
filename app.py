@@ -8,7 +8,7 @@ from datetime import datetime, date, timedelta
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# Estilos CSS - Identidade Visual Original
+# Estilos CSS - Restaurando a interface profissional das imagens
 st.markdown("""
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
@@ -31,7 +31,7 @@ def formata_br(valor):
 
 st.title("Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL (Conforme imagem 5e6223.png)
+# 2. BARRA LATERAL (Restaurada)
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
@@ -62,95 +62,115 @@ Desenvolvido por: <br>
 </div>
 """, unsafe_allow_html=True)
 
-# 3. FUNÇÕES DE DADOS E CÁLCULO
+# 3. FUNÇÕES DE DADOS COM BENCHMARKS NO GRÁFICO
 @st.cache_data(show_spinner=False)
-def busca_indices_economicos(d_ini, d_fim):
-    def get_bcb(codigo):
-        url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={d_ini.strftime('%d/%m/%Y')}&dataFinal={d_fim.strftime('%d/%m/%Y')}"
+def busca_macro(d_ini, d_fim):
+    def bcb(c):
+        url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{c}/dados?formato=json&dataInicial={d_ini.strftime('%d/%m/%Y')}&dataFinal={d_fim.strftime('%d/%m/%Y')}"
         try:
-            r = requests.get(url, timeout=15)
+            r = requests.get(url, timeout=10)
             df = pd.DataFrame(r.json())
             df['data'] = pd.to_datetime(df['data'], dayfirst=True)
-            df['valor'] = pd.to_numeric(df['valor']) / 100
+            df['v'] = pd.to_numeric(df['valor']) / 100
             return df.set_index('data')
         except: return pd.DataFrame()
-    return get_bcb(12), get_bcb(433)
+    return bcb(12), bcb(433)
 
 @st.cache_data(show_spinner=False)
-def carregar_tudo(t, d_ini, d_fim):
+def carregar_ativos(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
-    # Baixa dados extras para garantir o cálculo do primeiro dia
-    df = yf.download([t_sa, "^BVSP"], start=d_ini - timedelta(days=60), end=d_fim + timedelta(days=2), progress=False, auto_adjust=False)
-    if df.empty: return None, None
+    df = yf.download([t_sa, "^BVSP"], start=d_ini - timedelta(days=60), end=d_fim + timedelta(days=2), progress=False)
+    if df.empty or isinstance(df.columns, pd.RangeIndex): return None, None
     
-    if isinstance(df.columns, pd.MultiIndex):
-        df_ticker = df.xs(t_sa, axis=1, level=1).copy()
-        df_ibov = df.xs("^BVSP", axis=1, level=1).copy()
-    else: return None, None
+    # Extração robusta para MultiIndex
+    df_t = df.xs(t_sa, axis=1, level=1).copy().dropna()
+    df_i = df.xs("^BVSP", axis=1, level=1).copy().dropna()
+    
+    df_t.index = df_t.index.tz_localize(None)
+    df_i.index = df_i.index.tz_localize(None)
+    
+    # Fator de Retorno Total (com dividendos) vs Preço Seco
+    df_t["TR_F"] = (1 + df_t["Adj Close"].pct_change().fillna(0)).cumprod()
+    df_t["PR_F"] = (1 + df_t["Close"].pct_change().fillna(0)).cumprod()
+    df_i["Norm"] = (1 + df_i["Close"].pct_change().fillna(0)).cumprod()
+    
+    return df_t, df_i
 
-    df_ticker.index = df_ticker.index.tz_localize(None)
-    df_ibov.index = df_ibov.index.tz_localize(None)
-    
-    df_ticker["TR_Factor"] = (1 + df_ticker["Adj Close"].pct_change().fillna(0)).cumprod()
-    df_ibov["Norm"] = (1 + df_ibov["Close"].pct_change().fillna(0)).cumprod()
-    
-    return df_ticker, df_ibov
-
-# 4. LÓGICA DE INTERFACE
+# 4. PROCESSAMENTO
 if ticker_input:
-    df_acao, df_ibov_raw = carregar_tudo(ticker_input, data_inicio, data_fim)
-    df_cdi, df_ipca = busca_indices_economicos(data_inicio, data_fim)
+    df_acao, df_ibov_raw = carregar_ativos(ticker_input, data_inicio, data_fim)
+    df_cdi, df_ipca = busca_macro(data_inicio, data_fim)
 
     if df_acao is not None:
-        # GRÁFICO RESTAURADO (Com Proventos e Valorização separados)
+        # --- GRÁFICO ESTILIZADO (Restauração da imagem 5e6223.png) ---
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
-        df_v["TR_Chart"] = df_v["TR_Factor"] / df_v["TR_Factor"].iloc[0]
-        df_v["Price_Chart"] = df_v["Close"] / df_v["Close"].iloc[0]
+        
+        # Normalização para o ponto zero do gráfico
+        tr_base = df_v["TR_F"] / df_v["TR_F"].iloc[0]
+        pr_base = df_v["PR_F"] / df_v["PR_F"].iloc[0]
         
         fig = go.Figure()
-        # Benchmarks no gráfico
+        
+        # Benchmarks no gráfico (Linhas tracejadas)
         if mostrar_cdi and not df_cdi.empty:
-            s_cdi = (1 + df_cdi['valor']).cumprod()
-            fig.add_trace(go.Scatter(x=df_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', dash='dash')))
+            c_base = (1+df_cdi['v']).cumprod()
+            fig.add_trace(go.Scatter(x=df_cdi.index, y=(c_base/c_base.iloc[0]-1)*100, name='CDI', line=dict(color='gray', dash='dash', width=1.5)))
         
-        # Áreas coloridas conforme sua versão original
-        fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-        fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["TR_Chart"]-df_v["Price_Chart"])*100, stackgroup='one', name='Proventos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
-        fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["TR_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
+        if mostrar_ipca and not df_ipca.empty:
+            i_base = (1+df_ipca['v']).cumprod()
+            fig.add_trace(go.Scatter(x=df_ipca.index, y=(i_base/i_base.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=1.5)))
+
+        if mostrar_ibov and not df_ibov_raw.empty:
+            ib_base = df_ibov_raw["Norm"] / df_ibov_raw["Norm"].asof(pd.to_datetime(data_inicio))
+            fig.add_trace(go.Scatter(x=df_ibov_raw.index, y=(ib_base-1)*100, name='IBOVESPA', line=dict(color='orange', width=1.5)))
+
+        # Camadas de Valorização e Proventos (Área preenchida)
+        fig.add_trace(go.Scatter(x=df_v.index, y=(pr_base-1)*100, fill='tozeroy', name='Valorização', line=dict(color='rgba(31,119,180,0)'), fillcolor='rgba(31,119,180,0.3)'))
+        fig.add_trace(go.Scatter(x=df_v.index, y=(tr_base-1)*100, fill='tonexty', name='Proventos', line=dict(color='rgba(218,165,32,0)'), fillcolor='rgba(218,165,32,0.3)'))
         
-        fig.update_layout(template="plotly_white", hovermode="x unified", margin=dict(l=0, r=0, t=30, b=0))
+        # Linha principal do Retorno Total
+        fig.add_trace(go.Scatter(x=df_v.index, y=(tr_base-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
+
+        fig.update_layout(template="plotly_white", hovermode="x unified", height=450, margin=dict(l=0,r=0,t=20,b=0),
+                          yaxis=dict(ticksuffix="%", gridcolor="#f0f0f0"), xaxis=dict(gridcolor="#f0f0f0"))
         st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("Simulação de Patrimônio Acumulado")
         
-        # MATEMÁTICA QUE MUDA COM O CALENDÁRIO
-        def simulacao_dinamica(anos):
-            dt_fim = pd.to_datetime(data_fim)
-            dt_ini = dt_fim - timedelta(days=anos*365)
+        # --- CÁLCULO DINÂMICO (CORRIGIDO: Respeita o Calendário) ---
+        def simular_pelo_fim(anos_atras):
+            dt_alvo_fim = pd.to_datetime(data_fim)
+            dt_alvo_ini = dt_alvo_fim - timedelta(days=anos_atras * 365)
             
-            # Bloqueia se o calendário não tiver data suficiente
-            if dt_ini < pd.to_datetime(data_inicio): return None
+            # Validação: se o calendário de "Início" for depois da data calculada, usamos o Início do calendário
+            if dt_alvo_ini < pd.to_datetime(data_inicio): return None
 
-            df_p = df_acao.loc[dt_ini:dt_fim].copy()
-            df_p['m'] = df_p.index.to_period('M')
-            datas = df_p.groupby('m').head(1).index.tolist()
+            df_per = df_acao.loc[dt_alvo_ini:dt_alvo_fim].copy()
+            if df_per.empty: return None
             
-            # Cálculo Ativo
-            vf = sum(valor_aporte * (df_acao.loc[df_p.index[-1], "TR_Factor"] / df_acao.loc[d, "TR_Factor"]) for d in datas)
-            vi = len(datas) * valor_aporte
+            # Datas de aportes (Primeiro dia útil de cada mês)
+            datas_aportes = df_per.groupby(df_per.index.to_period('M')).head(1).index.tolist()
             
-            # Benchmark genérico
-            def bench(df_ref, col='valor', is_rate=True):
+            total_vf = 0
+            for d in datas_aportes:
+                # O multiplicador é: (Fator no último dia do calendário / Fator no dia do aporte)
+                fator_crescimento = df_acao["TR_F"].asof(dt_alvo_fim) / df_acao["TR_F"].asof(d)
+                total_vf += valor_aporte * fator_crescimento
+            
+            vi = len(datas_aportes) * valor_aporte
+            
+            # Benchmarks de acumulação
+            def acumula_bench(df_ref, col='v', is_rate=True):
                 if df_ref.empty: return 0
-                serie = (1 + df_ref[col]).cumprod() if is_rate else df_ref[col]
-                v_fim = serie.asof(dt_fim)
-                return sum(valor_aporte * (v_fim / serie.asof(d)) for d in datas)
+                serie = (1+df_ref[col]).cumprod() if is_rate else df_ref[col]
+                v_f = serie.asof(dt_alvo_fim)
+                return sum(valor_aporte * (v_f / serie.asof(d)) for d in datas_aportes)
 
-            return vf, vi, bench(df_cdi), bench(df_ipca), bench(df_ibov_raw, 'Norm', False)
+            return total_vf, vi, acumula_bench(df_cdi), acumula_bench(df_ipca), acumula_bench(df_ibov_raw, 'Norm', False)
 
         cols = st.columns(3)
         for i, anos in enumerate([10, 5, 1]):
-            res = simulacao_dinamica(anos)
+            res = simular_pelo_fim(anos)
             with cols[i]:
                 if res:
                     vf, vi, v_cdi, v_ipca, v_ibov = res
@@ -167,31 +187,33 @@ if ticker_input:
                         <div class="card-destaque">💰 Lucro Acumulado: {formata_br(vf-vi)}</div>
                     </div>""", unsafe_allow_html=True)
                 else:
-                    st.info(f"Filtre mais de {anos} anos no calendário.")
+                    st.info(f"O filtro do calendário precisa cobrir ao menos {anos} ano(s).")
 
-        # GUIA COMPLETO (Conforme imagem_5378de.jpg)
+        # --- GUIA DE TERMOS COMPLETO (Restauração da imagem 5378de.jpg) ---
         st.markdown("""
         <div class="glossario-container">
-            <h3 style="color: #1f77b4; margin-top:0; border-bottom: 2px solid #e8f0fe; padding-bottom: 10px;">📖 GUIA DE TERMOS E INDICADORES</h3>
+            <h3 style="color: #1f77b4; margin-top:0;">📖 GUIA DE TERMOS E INDICADORES</h3>
             <div class="glossario-item">
                 <b>• CDI (Certificado de Depósito Interbancário)</b>
-                Representa a rentabilidade média das aplicações de renda fixa pós-fixadas. É o "mínimo" que um investimento deve render para valer o risco.
+                É a régua da renda fixa. Representa o retorno de aplicações seguras como o Tesouro Selic. Serve para você avaliar se o risco de investir em ações trouxe um prêmio real.
             </div>
             <div class="glossario-item">
                 <b>• Correção IPCA (Inflação)</b>
-                Mostra quanto seu dinheiro deveria render apenas para não perder o poder de compra. É a base para entender o lucro real.
+                Representa a atualização do seu dinheiro para o <b>valor presente</b>. Indica quanto você precisaria ter hoje para manter o mesmo poder de compra que tinha no passado.
             </div>
             <div class="glossario-item">
                 <b>• Ibovespa</b>
-                O principal índice da bolsa brasileira. Serve para comparar se sua escolha de ação individual está ganhando ou perdendo da média do mercado.
+                É o termômetro do mercado brasileiro. Reflete a média de desempenho das maiores empresas da Bolsa. Comparar seu ativo com ele mostra se você está batendo o mercado.
             </div>
             <div class="glossario-item">
                 <b>• Capital Nominal Investido</b>
-                A soma bruta de todos os seus aportes mensais, sem considerar nenhum rendimento.
+                É o somatório bruto de todos os aportes mensais que você fez. É o dinheiro que efetivamente saiu da sua conta corrente ao longo do tempo.
             </div>
             <div class="glossario-item">
                 <b>• Lucro Acumulado</b>
-                A diferença real entre o patrimônio final e o capital nominal que saiu do seu bolso.
+                É o ganho real acima do capital investido, somando a valorização das cotas e todos os dividendos recebidos no período.
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+    else: st.error("Ticker não encontrado ou dados indisponíveis para este período.")
