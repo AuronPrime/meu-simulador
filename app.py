@@ -10,11 +10,11 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 1.6rem; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.4; }
     .instrucoes { font-size: 0.8rem; color: #555; background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px; border-left: 5px solid #ccc; }
-    .comp-small { font-size: 0.75rem; color: #666; line-height: 1.2; margin-top: 2px; }
-    .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 10px; }
+    .comp-small { font-size: 0.85rem; color: #555; line-height: 1.4; margin-top: -10px; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 10px; line-height: 1.6; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -79,12 +79,9 @@ def carregar_dados_completos(t):
 # 4. LOGICA PRINCIPAL
 if ticker_input:
     with st.spinner("Sincronizando dados e indicadores..."):
-        # Garantia de carregamento prioritário dos índices
         s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
-        
         df_acao = carregar_dados_completos(ticker_input)
-        
         df_ibov_c = pd.Series()
         try:
             ibov_raw = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
@@ -102,7 +99,7 @@ if ticker_input:
             
             fig = go.Figure()
 
-            # Comparativos com arredondamento no hover (format=".1f")
+            # Gráfico com arredondamento no hover
             if not s_cdi.empty:
                 fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash'), hovertemplate='%{y:.1f}%'))
             if not s_ipca.empty:
@@ -110,7 +107,6 @@ if ticker_input:
             if not df_ibov_c.empty:
                 fig.add_trace(go.Scatter(x=df_ibov_c.index, y=(df_ibov_c/df_ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2), hovertemplate='%{y:.1f}%'))
 
-            # Ação
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base_Chart"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0), hovertemplate='%{y:.1f}%'))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base_Chart"])*100, stackgroup='one', name='Proventos (Div/JCP)', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0), hovertemplate='%{y:.1f}%'))
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3), hovertemplate='%{y:.1f}%'))
@@ -118,51 +114,52 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO COM COMPARAÇÃO PEQUENA
+            # 5. CARDS DE PATRIMÔNIO REESTRUTURADOS
             st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
-            def calcular_patrimonio_e_indices(df_full, valor_mensal, anos, s_cdi_full, s_ipca_full, s_ibov_full):
+            def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
                 n_meses = anos * 12
                 df_calc = df_full.tail(n_meses * 22)
                 if len(df_calc) < 20: return [0]*6
-                
                 df_calc['month'] = df_calc.index.to_period('M')
-                datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
-                investido = n_meses * valor_mensal
+                datas = df_calc.groupby('month').head(1).index[-n_meses:]
                 
-                # Cálculo Ativo
-                total_cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas_aporte)
-                fator_reinvest = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
-                vf_ativo = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvest / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                # Ativo
+                cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
+                fator = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
+                vf_at = cotas * df_full["Close"].iloc[-1] * (fator / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
                 
-                # Cálculo Índices (Soma de aportes corrigidos)
-                def calc_index(serie):
-                    if serie.empty: return 0
-                    return sum(valor_mensal * (serie.iloc[-1] / serie.loc[d]) for d in datas_aporte if d in serie.index)
+                # Índices
+                def c_idx(s):
+                    return sum(valor_mensal * (s.iloc[-1] / s.loc[d]) for d in datas if d in s.index) if not s.empty else 0
 
-                return vf_ativo, investido, vf_ativo - investido, calc_index(s_cdi_full), calc_index(s_ipca_full), calc_index(s_ibov_full)
+                return vf_at, n_meses * valor_mensal, vf_at - (n_meses * valor_mensal), c_idx(s_cdi_f), c_idx(s_ipca_f), c_idx(s_ibov_f)
 
             col1, col2, col3 = st.columns(3)
             for anos, col in [(10, col1), (5, col2), (1, col3)]:
-                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_patrimonio_e_indices(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
+                vf, vi, lucro, v_cdi, v_ipca, v_ibov = calcular_tudo(df_acao, valor_aporte, anos, s_cdi, s_ipca, df_ibov_c)
                 with col:
                     if vf > 0:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
-                        st.write(f"Total Investido: {formata_br(vi)}")
-                        st.caption(f"Lucro Líquido: {formata_br(lucro)}")
-                        # Pequenos comparativos abaixo
+                        # COMPARAÇÃO DIRETA LOGO ABAIXO DO NÚMERO GRANDE
                         st.markdown(f"""
                         <div class="comp-small">
-                        • Se fosse em CDI: {formata_br(v_cdi)}<br>
-                        • Se fosse em IPCA: {formata_br(v_ipca)}<br>
-                        • Se fosse Ibovespa: {formata_br(v_ibov)}
+                        • Se fosse em <b>CDI</b>: {formata_br(v_cdi)}<br>
+                        • Se fosse em <b>IPCA</b>: {formata_br(v_ipca)}<br>
+                        • Se fosse <b>Ibovespa</b>: {formata_br(v_ibov)}
                         </div>
                         """, unsafe_allow_html=True)
+                        st.write(f"Total Investido: {formata_br(vi)}")
+                        st.caption(f"Lucro Líquido: {formata_br(lucro)}")
 
-            # 6. GLOSSÁRIO
+            # 6. GLOSSÁRIO COMPLETO
             st.markdown("""
             <div class="glossario">
-            📌 <b>Glossário:</b> <b>Proventos (Div/JCP)</b> engloba Dividendos e Juros Sobre Capital Próprio reinvestidos. O algoritmo trata <b>splits e grupamentos</b> automaticamente via Preço Ajustado.
+            📌 <b>Glossário de Indicadores:</b><br><br>
+            • <b>Proventos (Div/JCP):</b> Soma de Dividendos e Juros Sobre Capital Próprio reinvestidos. O cálculo utiliza o ajuste de preço histórico para refletir o ganho real do acionista.<br><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> Principal referência de rentabilidade da Renda Fixa (pós-fixada). Se o ativo rende menos que o CDI, o risco da bolsa não foi compensado.<br><br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> A inflação oficial do Brasil. Rendimentos abaixo do IPCA significam perda de poder de compra.<br><br>
+            • <b>Ibovespa:</b> O "termômetro" do mercado. Representa a média das maiores empresas da bolsa, servindo para validar se sua escolha superou a média do mercado.
             </div>
             """, unsafe_allow_html=True)
             
