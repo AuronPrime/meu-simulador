@@ -11,7 +11,7 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; }
-    .instrucoes { font-size: 0.85rem; color: #555; background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
+    .instrucoes { font-size: 0.85rem; color: #555; background-color: #f0f2f6; padding: 12px; border-radius: 5px; margin-bottom: 20px; border-left: 5px solid #ccc; }
     .glossario { font-size: 0.8rem; color: #777; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; line-height: 1.6; }
     </style>
     """, unsafe_allow_html=True)
@@ -25,20 +25,21 @@ st.title("📊 Simulador de Acúmulo de Patrimônio")
 st.sidebar.header("Guia de Uso")
 st.sidebar.markdown("""
 <div class="instrucoes">
-1️⃣ <b>Ativo:</b> Digite o código da ação (ex: PETR4).<br>
-2️⃣ <b>Aporte:</b> Defina o valor mensal.<br>
-3️⃣ <b>Período:</b> Escolha o intervalo do gráfico.<br>
-4️⃣ <b>Benchmarks:</b> Ligue/Desligue os índices para comparar.
+1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
+2) <b>Aporte:</b> Defina o valor mensal.<br>
+3) <b>Período:</b> O padrão inicia em 10 anos.<br>
+4) <b>Filtros:</b> Compare com índices abaixo.
 </div>
 """, unsafe_allow_html=True)
 
-# Ticker vazio inicialmente conforme combinado
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período do Gráfico")
-d_ini_padrao = date(2010, 1, 1)
+# AJUSTE: Data final é anteontem e inicial é 10 anos antes disso
 d_fim_padrao = date.today() - timedelta(days=2) 
+d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
+
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
@@ -66,6 +67,7 @@ def carregar_tudo(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
         ticker_obj = yf.Ticker(t_sa)
+        # Puxamos desde 2005 para garantir que os cards de 10 anos funcionem sempre
         df_hist = ticker_obj.history(start="2005-01-01")
         if df_hist.empty: return None
         df = df_hist[['Close']].copy()
@@ -94,13 +96,14 @@ def carregar_tudo(t, d_ini, d_fim):
 
 # 4. LÓGICA DE EXIBIÇÃO
 if not ticker_input:
-    st.info("💡 Por favor, digite um **Ticker** na barra lateral e clique em **Analisar Patrimônio**.")
+    st.info("💡 Digite um **Ticker** na barra lateral para começar.")
 elif btn_analisar or ticker_input:
     df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
     if df_completo is not None:
         df_grafico = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         if not df_grafico.empty:
             df_v = df_grafico.copy()
+            # Rebase dos fatores para o início do gráfico selecionado
             for col in ["Total_Fact", "IPCA_Fator"]: df_v[col] = df_v[col] / df_v[col].iloc[0]
             
             fig = go.Figure()
@@ -139,20 +142,19 @@ elif btn_analisar or ticker_input:
                 vf, vi, lr = simular_historico(df_completo, valor_aporte, anos)
                 with coluna:
                     if vf > 0:
-                        st.metric(f"Se investisse há {anos} anos", formata_br(vf))
+                        st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"📈 Lucro Real: {formata_br(lr)}")
                     else: st.warning(f"Sem dados de {anos} anos.")
 
-            # GLOSSÁRIO NO FINAL DE TUDO
+            # GLOSSÁRIO NO FINAL
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores:</b><br>
-            • <b>CDI (Certificado de Depósito Interbancário):</b> Representa o rendimento médio da Renda Fixa pós-fixada. É a referência mínima para um investidor conservador.<br>
-            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É a medida oficial da inflação no Brasil. Quando seu lucro real é positivo, significa que seu dinheiro ganhou poder de compra.<br>
-            • <b>Ibovespa:</b> O principal índice da B3, composto pelas empresas mais negociadas. Serve para avaliar se sua escolha de ação superou a média do mercado brasileiro.
+            • <b>CDI:</b> Reflete o rendimento da Renda Fixa. É o benchmark de segurança.<br>
+            • <b>IPCA:</b> Medida da inflação. Lucro Real acima do IPCA significa ganho de poder de compra.<br>
+            • <b>Ibovespa:</b> Média das principais ações. Mostra se seu ativo venceu o mercado.
             </div>
             """, unsafe_allow_html=True)
-
-        else: st.error("O período selecionado não possui dados para esta ação.")
-    else: st.error(f"Erro ao buscar dados para '{ticker_input}'. Verifique o código.")
+        else: st.error("Sem dados para o período.")
+    else: st.error(f"Ticker '{ticker_input}' não encontrado.")
