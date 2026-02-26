@@ -12,7 +12,7 @@ st.markdown("""
     <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; }
     .instrucoes { font-size: 0.85rem; color: #555; background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
-    .glossario { font-size: 0.8rem; color: #666; margin-top: 10px; border-top: 1px solid #ddd; padding-top: 10px; }
+    .glossario { font-size: 0.8rem; color: #777; margin-top: 30px; border-top: 1px solid #eee; padding-top: 15px; line-height: 1.6; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -21,18 +21,19 @@ def formata_br(valor):
 
 st.title("📊 Simulador de Acúmulo de Patrimônio")
 
-# 2. BARRA LATERAL (Instruções e Configurações)
+# 2. BARRA LATERAL
 st.sidebar.header("Guia de Uso")
 st.sidebar.markdown("""
 <div class="instrucoes">
 1️⃣ <b>Ativo:</b> Digite o código da ação (ex: PETR4).<br>
-2️⃣ <b>Aporte:</b> Defina quanto investirá por mês.<br>
+2️⃣ <b>Aporte:</b> Defina o valor mensal.<br>
 3️⃣ <b>Período:</b> Escolha o intervalo do gráfico.<br>
-4️⃣ <b>Benchmarks:</b> Ligue/Desligue os índices para comparar o desempenho real.
+4️⃣ <b>Benchmarks:</b> Ligue/Desligue os índices para comparar.
 </div>
 """, unsafe_allow_html=True)
 
-ticker_input = st.sidebar.text_input("Digite o Ticker", "BBAS3").upper().strip()
+# Ticker vazio inicialmente conforme combinado
+ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período do Gráfico")
@@ -92,62 +93,66 @@ def carregar_tudo(t, d_ini, d_fim):
     except: return None
 
 # 4. LÓGICA DE EXIBIÇÃO
-df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
-if df_completo is not None:
-    df_grafico = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
-    if not df_grafico.empty:
-        df_v = df_grafico.copy()
-        for col in ["Total_Fact", "IPCA_Fator"]: df_v[col] = df_v[col] / df_v[col].iloc[0]
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df_v.index, y=((df_v["Close"]/df_v["Close"].iloc[0])-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-        fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-(df_v["Close"]/df_v["Close"].iloc[0]))*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
-        
-        if mostrar_ipca:
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IPCA_Fator"]-1)*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
-        if mostrar_cdi:
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["CDI_Acum"]-df_v["CDI_Acum"].iloc[0])*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
-        if mostrar_ibov and "IBOV_Acum" in df_v.columns:
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Acum"]-df_v["IBOV_Acum"].iloc[0])*100, name='Ibovespa', line=dict(color='orange', width=2)))
-        
-        fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
-        fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
-        st.plotly_chart(fig, use_container_width=True)
+if not ticker_input:
+    st.info("💡 Por favor, digite um **Ticker** na barra lateral e clique em **Analisar Patrimônio**.")
+elif btn_analisar or ticker_input:
+    df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
+    if df_completo is not None:
+        df_grafico = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
+        if not df_grafico.empty:
+            df_v = df_grafico.copy()
+            for col in ["Total_Fact", "IPCA_Fator"]: df_v[col] = df_v[col] / df_v[col].iloc[0]
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df_v.index, y=((df_v["Close"]/df_v["Close"].iloc[0])-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-(df_v["Close"]/df_v["Close"].iloc[0]))*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            
+            if mostrar_ipca:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IPCA_Fator"]-1)*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
+            if mostrar_cdi:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["CDI_Acum"]-df_v["CDI_Acum"].iloc[0])*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
+            if mostrar_ibov and "IBOV_Acum" in df_v.columns:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Acum"]-df_v["IBOV_Acum"].iloc[0])*100, name='Ibovespa', line=dict(color='orange', width=2)))
+            
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
+            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+            st.plotly_chart(fig, use_container_width=True)
 
-        # GLOSSÁRIO LOGO ABAIXO DO GRÁFICO
-        st.markdown("""
-        <div class="glossario">
-        📌 <b>Glossário:</b><br>
-        • <b>CDI:</b> Taxa que reflete o rendimento da Renda Fixa (padrão conservador).<br>
-        • <b>IPCA:</b> Índice oficial da inflação no Brasil. Se sua linha estiver acima dele, você teve ganho real.<br>
-        • <b>Ibovespa:</b> Média das principais ações da bolsa. Use para saber se seu papel bateu o mercado.
-        </div>
-        """, unsafe_allow_html=True)
+            # 5. CARDS DE RESULTADO
+            st.subheader(f"💰 Patrimônio com Aportes Mensais de {formata_br(valor_aporte)}")
+            def simular_historico(df_orig, v_mes, anos):
+                n_meses = anos * 12
+                df_rec = df_orig.tail(n_meses * 21)
+                df_rec['m'] = df_rec.index.to_period('M')
+                datas_aporte = df_rec.groupby('m').head(1).index[-n_meses:]
+                if len(datas_aporte) < n_meses: return 0, 0, 0
+                recorte = df_orig[df_orig.index >= datas_aporte[0]].copy()
+                cotas = sum(v_mes / recorte.loc[d, 'Close'] for d in datas_aporte)
+                f_total = recorte["Total_Fact"].iloc[-1] / recorte["Total_Fact"].iloc[0]
+                v_final = cotas * recorte["Close"].iloc[-1] * (f_total/(recorte["Close"].iloc[-1] / recorte["Close"].iloc[0]))
+                v_investido = n_meses * v_mes
+                l_real = v_final - sum(v_mes * (recorte['IPCA_Fator'].iloc[-1] / recorte.loc[d, 'IPCA_Fator']) for d in datas_aporte)
+                return v_final, v_investido, l_real
 
-        # 5. CARDS DE RESULTADO
-        st.subheader(f"💰 Patrimônio com Aportes Mensais de {formata_br(valor_aporte)}")
-        def simular_historico(df_orig, v_mes, anos):
-            n_meses = anos * 12
-            df_rec = df_orig.tail(n_meses * 21)
-            df_rec['m'] = df_rec.index.to_period('M')
-            datas_aporte = df_rec.groupby('m').head(1).index[-n_meses:]
-            if len(datas_aporte) < n_meses: return 0, 0, 0
-            recorte = df_orig[df_orig.index >= datas_aporte[0]].copy()
-            cotas = sum(v_mes / recorte.loc[d, 'Close'] for d in datas_aporte)
-            f_total = recorte["Total_Fact"].iloc[-1] / recorte["Total_Fact"].iloc[0]
-            v_final = cotas * recorte["Close"].iloc[-1] * (f_total/(recorte["Close"].iloc[-1] / recorte["Close"].iloc[0]))
-            v_investido = n_meses * v_mes
-            l_real = v_final - sum(v_mes * (recorte['IPCA_Fator'].iloc[-1] / recorte.loc[d, 'IPCA_Fator']) for d in datas_aporte)
-            return v_final, v_investido, l_real
+            col1, col2, col3 = st.columns(3)
+            for anos, coluna in [(10, col1), (5, col2), (1, col3)]:
+                vf, vi, lr = simular_historico(df_completo, valor_aporte, anos)
+                with coluna:
+                    if vf > 0:
+                        st.metric(f"Se investisse há {anos} anos", formata_br(vf))
+                        st.write(f"Investido: {formata_br(vi)}")
+                        st.caption(f"📈 Lucro Real: {formata_br(lr)}")
+                    else: st.warning(f"Sem dados de {anos} anos.")
 
-        col1, col2, col3 = st.columns(3)
-        for anos, coluna in [(10, col1), (5, col2), (1, col3)]:
-            vf, vi, lr = simular_historico(df_completo, valor_aporte, anos)
-            with coluna:
-                if vf > 0:
-                    st.metric(f"Se investisse há {anos} anos", formata_br(vf))
-                    st.write(f"Investido: {formata_br(vi)}")
-                    st.caption(f"📈 Lucro Real: {formata_br(lr)}")
-                else: st.warning(f"Sem dados de {anos} anos.")
-    else: st.error("Ajuste o período para ver o gráfico.")
-else: st.error("Erro ao buscar dados. Tente novamente.")
+            # GLOSSÁRIO NO FINAL DE TUDO
+            st.markdown("""
+            <div class="glossario">
+            📌 <b>Entenda os indicadores:</b><br>
+            • <b>CDI (Certificado de Depósito Interbancário):</b> Representa o rendimento médio da Renda Fixa pós-fixada. É a referência mínima para um investidor conservador.<br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É a medida oficial da inflação no Brasil. Quando seu lucro real é positivo, significa que seu dinheiro ganhou poder de compra.<br>
+            • <b>Ibovespa:</b> O principal índice da B3, composto pelas empresas mais negociadas. Serve para avaliar se sua escolha de ação superou a média do mercado brasileiro.
+            </div>
+            """, unsafe_allow_html=True)
+
+        else: st.error("O período selecionado não possui dados para esta ação.")
+    else: st.error(f"Erro ao buscar dados para '{ticker_input}'. Verifique o código.")
