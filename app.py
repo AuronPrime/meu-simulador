@@ -10,10 +10,21 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
     .resumo-objetivo { font-size: 0.9rem; color: #333; background-color: #e8f0fe; padding: 12px; border-radius: 8px; margin-bottom: 15px; border-left: 5px solid #1f77b4; line-height: 1.4; }
-    .instrucoes { font-size: 0.8rem; color: #555; background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 15px; border-left: 5px solid #ccc; }
-    .comp-small { font-size: 0.85rem; color: #555; line-height: 1.4; margin-top: -10px; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    
+    /* Estilo dos Cards Cinzas para Infos Secundárias */
+    .info-card {
+        background-color: #f8f9fb;
+        border: 1px solid #e9ecef;
+        padding: 15px;
+        border-radius: 10px;
+        margin-top: 10px;
+    }
+    
+    .comp-header { font-size: 0.8rem; font-weight: bold; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .comp-item { font-size: 0.85rem; color: #444; line-height: 1.5; }
+    .secundario-texto { font-size: 0.8rem; color: #777; margin-top: 5px; }
     .glossario { font-size: 0.85rem; color: #444; margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; background-color: #f9f9f9; padding: 15px; border-radius: 10px; line-height: 1.6; }
     </style>
     """, unsafe_allow_html=True)
@@ -26,7 +37,7 @@ st.title("📊 Simulador de Acúmulo de Patrimônio")
 # 2. BARRA LATERAL
 st.sidebar.markdown("""
 <div class="resumo-objetivo">
-<b>Objetivo:</b> Analisar o <b>Total Return</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de <b>splits, grupamentos e bonificações</b> para uma simulação fiel de aportes históricos.
+<b>Objetivo:</b> Analisar o <b>Total Return</b> de um ativo, calculando o acúmulo real via <b>Proventos (Div/JCP)</b>. O algoritmo neutraliza distorções de <b>splits, grupamentos e bonificações</b>.
 </div>
 """, unsafe_allow_html=True)
 
@@ -39,7 +50,7 @@ d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
-st.sidebar.subheader("Comparativos no Gráfico")
+st.sidebar.subheader("Benchmarks no Gráfico")
 mostrar_cdi = st.sidebar.checkbox("CDI (Renda Fixa)", value=True)
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True)
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
@@ -78,7 +89,7 @@ def carregar_dados_completos(t):
 
 # 4. LOGICA PRINCIPAL
 if ticker_input:
-    with st.spinner("Sincronizando dados e indicadores..."):
+    with st.spinner("Sincronizando dados de mercado..."):
         s_cdi = busca_indice_bcb(12, data_inicio, data_fim) if mostrar_cdi else pd.Series()
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim) if mostrar_ipca else pd.Series()
         df_acao = carregar_dados_completos(ticker_input)
@@ -99,7 +110,6 @@ if ticker_input:
             
             fig = go.Figure()
 
-            # Gráfico com arredondamento no hover
             if not s_cdi.empty:
                 fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash'), hovertemplate='%{y:.1f}%'))
             if not s_ipca.empty:
@@ -114,25 +124,22 @@ if ticker_input:
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"), margin=dict(l=10, r=10, t=40, b=10), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
-            # 5. CARDS DE PATRIMÔNIO REESTRUTURADOS
-            st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
+            # 5. CARDS DE PATRIMÔNIO (DESIGN CORPORATIVO)
+            st.subheader(f"💰 Projeção de Aportes Mensais ({formata_br(valor_aporte)})")
             
             def calcular_tudo(df_full, valor_mensal, anos, s_cdi_f, s_ipca_f, s_ibov_f):
                 n_meses = anos * 12
-                df_calc = df_full.tail(n_meses * 22)
-                if len(df_calc) < 20: return [0]*6
+                df_calc = df_full.tail(min(len(df_full), n_meses * 22))
+                if len(df_calc) < 10: return [0]*6
                 df_calc['month'] = df_calc.index.to_period('M')
                 datas = df_calc.groupby('month').head(1).index[-n_meses:]
                 
-                # Ativo
                 cotas = sum(valor_mensal / df_full.loc[d, 'Close'] for d in datas)
                 fator = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas[0]]
                 vf_at = cotas * df_full["Close"].iloc[-1] * (fator / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas[0]]))
                 
-                # Índices
                 def c_idx(s):
                     return sum(valor_mensal * (s.iloc[-1] / s.loc[d]) for d in datas if d in s.index) if not s.empty else 0
-
                 return vf_at, n_meses * valor_mensal, vf_at - (n_meses * valor_mensal), c_idx(s_cdi_f), c_idx(s_ipca_f), c_idx(s_ibov_f)
 
             col1, col2, col3 = st.columns(3)
@@ -141,27 +148,31 @@ if ticker_input:
                 with col:
                     if vf > 0:
                         st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
-                        # COMPARAÇÃO DIRETA LOGO ABAIXO DO NÚMERO GRANDE
+                        
+                        # CAIXA CINZA COM BENCHMARKS E INFOS TÉCNICAS
                         st.markdown(f"""
-                        <div class="comp-small">
-                        • Se fosse em <b>CDI</b>: {formata_br(v_cdi)}<br>
-                        • Se fosse em <b>IPCA</b>: {formata_br(v_ipca)}<br>
-                        • Se fosse <b>Ibovespa</b>: {formata_br(v_ibov)}
+                        <div class="info-card">
+                            <div class="comp-header">Benchmarks Comparativos</div>
+                            <div class="comp-item">🎯 <b>CDI (100%):</b> {formata_br(v_cdi)}</div>
+                            <div class="comp-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>
+                            <div class="comp-item">🛡️ <b>Poder de Compra (IPCA):</b> {formata_br(v_ipca)}</div>
+                            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
+                            <div class="comp-header">Resultado da Carteira</div>
+                            <div class="comp-item">💵 <b>Capital Investido:</b> {formata_br(vi)}</div>
+                            <div class="comp-item" style="color: #28a745;">💰 <b>Lucro Líquido:</b> {formata_br(lucro)}</div>
                         </div>
                         """, unsafe_allow_html=True)
-                        st.write(f"Total Investido: {formata_br(vi)}")
-                        st.caption(f"Lucro Líquido: {formata_br(lucro)}")
 
-            # 6. GLOSSÁRIO COMPLETO
+            # 6. GLOSSÁRIO
             st.markdown("""
             <div class="glossario">
             📌 <b>Glossário de Indicadores:</b><br><br>
-            • <b>Proventos (Div/JCP):</b> Soma de Dividendos e Juros Sobre Capital Próprio reinvestidos. O cálculo utiliza o ajuste de preço histórico para refletir o ganho real do acionista.<br><br>
-            • <b>CDI (Certificado de Depósito Interbancário):</b> Principal referência de rentabilidade da Renda Fixa (pós-fixada). Se o ativo rende menos que o CDI, o risco da bolsa não foi compensado.<br><br>
-            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> A inflação oficial do Brasil. Rendimentos abaixo do IPCA significam perda de poder de compra.<br><br>
-            • <b>Ibovespa:</b> O "termômetro" do mercado. Representa a média das maiores empresas da bolsa, servindo para validar se sua escolha superou a média do mercado.
+            • <b>Proventos (Div/JCP):</b> Representa o fluxo de caixa distribuído aos acionistas (Dividendos e Juros Sobre Capital Próprio) integralmente reinvestidos no ativo.<br><br>
+            • <b>CDI:</b> Referência de custo de oportunidade do capital na Renda Fixa pós-fixada.<br><br>
+            • <b>IPCA:</b> Reflete a atualização monetária necessária para manter o poder de compra original dos aportes realizados.<br><br>
+            • <b>Ibovespa:</b> Índice de performance média do mercado acionário brasileiro.
             </div>
             """, unsafe_allow_html=True)
             
-    else: st.error("Erro: Ticker não encontrado.")
-else: st.info("💡 Digite um Ticker para começar.")
+    else: st.error("Ticker não encontrado.")
+else: st.info("💡 Digite um Ticker para iniciar a análise.")
