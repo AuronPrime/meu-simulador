@@ -36,7 +36,6 @@ ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").u
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
 st.sidebar.subheader("Período do Gráfico")
-# AJUSTE: Data final é anteontem e inicial é 10 anos antes disso
 d_fim_padrao = date.today() - timedelta(days=2) 
 d_ini_padrao = d_fim_padrao - timedelta(days=365*10)
 
@@ -67,30 +66,37 @@ def carregar_tudo(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
         ticker_obj = yf.Ticker(t_sa)
-        # Puxamos desde 2005 para garantir que os cards de 10 anos funcionem sempre
         df_hist = ticker_obj.history(start="2005-01-01")
         if df_hist.empty: return None
         df = df_hist[['Close']].copy()
         df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
         df.index = df.index.tz_localize(None)
+        
+        # Fator Acumulado de Retorno Total (Preço + Dividendos)
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         
+        # Ibovespa
         try:
             ibov = yf.download("^BVSP", start="2005-01-01", progress=False)
             if not ibov.empty:
                 ibov_c = ibov['Close'].copy()
                 ibov_c.index = ibov_c.index.tz_localize(None)
-                df["IBOV_Acum"] = (ibov_c / ibov_c.iloc[0]).reindex(df.index).ffill() - 1
+                # Criamos um fator acumulado para o Ibov também
+                df["IBOV_Fact"] = (ibov_c / ibov_c.iloc[0]).reindex(df.index).ffill()
         except: pass
             
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
+        
+        # IPCA
         df_ipca = get_bcb(433, s, e, 0.004)
         ipca_f = df_ipca.reindex(pd.date_range(df.index[0], df.index[-1]), method='ffill')
-        df["IPCA_Fator"] = (1 + (ipca_f['valor']/21)).cumprod().reindex(df.index).ffill()
+        df["IPCA_Fact"] = (1 + (ipca_f['valor']/21)).cumprod().reindex(df.index).ffill()
         
+        # CDI
         df_cdi = get_bcb(12, s, e, 0.0004)
         cdi_f = df_cdi.reindex(pd.date_range(df.index[0], df.index[-1]), method='ffill')
-        df["CDI_Acum"] = (1 + cdi_f['valor']).cumprod().reindex(df.index).ffill() - 1
+        df["CDI_Fact"] = (1 + cdi_f['valor']).cumprod().reindex(df.index).ffill()
+        
         return df
     except: return None
 
@@ -100,24 +106,37 @@ if not ticker_input:
 elif btn_analisar or ticker_input:
     df_completo = carregar_tudo(ticker_input, data_inicio, data_fim)
     if df_completo is not None:
-        df_grafico = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
-        if not df_grafico.empty:
-            df_v = df_grafico.copy()
-            # Rebase dos fatores para o início do gráfico selecionado
-            for col in ["Total_Fact", "IPCA_Fator"]: df_v[col] = df_v[col] / df_v[col].iloc[0]
+        # Filtra o período selecionado
+        df_v = df_completo.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
+        
+        if not df_v.empty:
+            # AJUSTE CRUCIAL: Rebasear todos os fatores para começar em 1 (ou 0%) na data inicial selecionada
+            colunas_fator = ["Total_Fact", "IPCA_Fact", "CDI_Fact"]
+            if "IBOV_Fact" in df_v.columns: colunas_fator.append("IBOV_Fact")
+            
+            for col in colunas_fator:
+                df_v[col] = df_v[col] / df_v[col].iloc[0]
+            
+            # Cálculo de Preço puro para a área de valorização
+            df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=df_v.index, y=((df_v["Close"]/df_v["Close"].iloc[0])-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-(df_v["Close"]/df_v["Close"].iloc[0]))*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            # 1. Valorização (Área)
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
+            # 2. Dividendos (Área - Diferença entre Total e Preço)
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
             
+            # Linhas de Comparação (Agora todas partindo do zero do período)
             if mostrar_ipca:
-                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IPCA_Fator"]-1)*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IPCA_Fact"]-1)*100, name='Inflação (IPCA)', line=dict(color='red', width=2)))
             if mostrar_cdi:
-                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["CDI_Acum"]-df_v["CDI_Acum"].iloc[0])*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
-            if mostrar_ibov and "IBOV_Acum" in df_v.columns:
-                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Acum"]-df_v["IBOV_Acum"].iloc[0])*100, name='Ibovespa', line=dict(color='orange', width=2)))
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["CDI_Fact"]-1)*100, name='CDI', line=dict(color='gray', width=1.5, dash='dash')))
+            if mostrar_ibov and "IBOV_Fact" in df_v.columns:
+                fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["IBOV_Fact"]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
             
+            # Linha Mestra
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
+            
             fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -134,7 +153,9 @@ elif btn_analisar or ticker_input:
                 f_total = recorte["Total_Fact"].iloc[-1] / recorte["Total_Fact"].iloc[0]
                 v_final = cotas * recorte["Close"].iloc[-1] * (f_total/(recorte["Close"].iloc[-1] / recorte["Close"].iloc[0]))
                 v_investido = n_meses * v_mes
-                l_real = v_final - sum(v_mes * (recorte['IPCA_Fator'].iloc[-1] / recorte.loc[d, 'IPCA_Fator']) for d in datas_aporte)
+                # Lucro Real considerando IPCA do período do card
+                f_ipca_card = recorte["IPCA_Fact"] / recorte["IPCA_Fact"].iloc[0]
+                l_real = v_final - sum(v_mes * (f_ipca_card.iloc[-1] / f_ipca_card.loc[d]) for d in datas_aporte)
                 return v_final, v_investido, l_real
 
             col1, col2, col3 = st.columns(3)
@@ -147,13 +168,12 @@ elif btn_analisar or ticker_input:
                         st.caption(f"📈 Lucro Real: {formata_br(lr)}")
                     else: st.warning(f"Sem dados de {anos} anos.")
 
-            # GLOSSÁRIO NO FINAL
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores:</b><br>
-            • <b>CDI:</b> Reflete o rendimento da Renda Fixa. É o benchmark de segurança.<br>
-            • <b>IPCA:</b> Medida da inflação. Lucro Real acima do IPCA significa ganho de poder de compra.<br>
-            • <b>Ibovespa:</b> Média das principais ações. Mostra se seu ativo venceu o mercado.
+            • <b>CDI:</b> Reflete o rendimento da Renda Fixa. No gráfico, ele sempre parte de 0% na data inicial escolhida.<br>
+            • <b>IPCA:</b> Medida da inflação. Se o Retorno Total estiver acima dele, seu patrimônio cresceu acima do custo de vida.<br>
+            • <b>Ibovespa:</b> Desempenho médio das maiores ações da bolsa no período selecionado.
             </div>
             """, unsafe_allow_html=True)
         else: st.error("Sem dados para o período.")
