@@ -94,8 +94,10 @@ try:
     for anos, coluna in [(10, col1), (5, col2), (1, col3)]:
         final, investido = calc_invest_full(data, valor_aporte, anos)
         with coluna:
-            st.metric(label=f"Há {anos} anos", value=f"R$ {final:,.2f}")
-            st.caption(f"Investido: R$ {investido:,.2f}")
+            st.metric(label=f"Acúmulo em {anos} anos", value=f"R$ {final:,.2f}")
+            st.write(f"**Total Investido:** R$ {investido:,.2f}")
+            lucro = final - investido
+            st.caption(f"📈 Lucro: R$ {lucro:,.2f}")
 
 except Exception as e:
     st.error(f"Erro: {e}")
