@@ -23,15 +23,6 @@ st.title("📊 Simulador de Acúmulo de Patrimônio")
 
 # 2. BARRA LATERAL
 st.sidebar.header("Guia de Uso")
-st.sidebar.markdown("""
-<div class="instrucoes">
-1) <b>Ativo:</b> Digite o ticker (ex: PETR4).<br>
-2) <b>Aporte:</b> Defina o valor mensal.<br>
-3) <b>Período:</b> O padrão inicia em 10 anos.<br>
-4) <b>Filtros:</b> Compare com índices abaixo.
-</div>
-""", unsafe_allow_html=True)
-
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, ITUB4)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
@@ -69,10 +60,22 @@ def carregar_dados_completos(t):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
         tk = yf.Ticker(t_sa)
+        # Mantemos o history que você gosta
         df = tk.history(start="2005-01-01")[['Close', 'Dividends']]
         if df.empty: return None
         df.index = df.index.tz_localize(None)
-        df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
+        
+        # --- FILTRO ANTI-ERRO DE DIVIDENDOS (AQUI ESTÁ A MÁGICA) ---
+        # Calculamos o Yield diário. Se for > 15%, é erro de split do Yahoo.
+        df['Daily_Yield'] = (df["Dividends"] / df["Close"]).fillna(0)
+        
+        # Se o yield for absurdo (ex: Copasa no split), zeramos aquele dividendo específico 
+        # para não poluir o gráfico com retornos irreais.
+        df.loc[df['Daily_Yield'] > 0.15, 'Dividends'] = 0 
+        df['Daily_Yield'] = (df["Dividends"] / df["Close"]).fillna(0)
+        # ----------------------------------------------------------
+        
+        df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + df['Daily_Yield']).cumprod()
         return df
     except: return None
 
@@ -137,13 +140,13 @@ if ticker_input:
                         st.write(f"Investido: {formata_br(vi)}")
                         st.caption(f"Lucro Bruto: {formata_br(vf-vi)}")
 
-            # 6. GLOSSÁRIO DETALHADO (RESTALRADO)
+            # 6. GLOSSÁRIO DETALHADO
             st.markdown("""
             <div class="glossario">
             📌 <b>Entenda os indicadores de comparação:</b><br><br>
-            • <b>CDI (Certificado de Depósito Interbancário):</b> É o principal termômetro da Renda Fixa no Brasil. Ele caminha muito próximo à taxa Selic. Se a sua ação rende menos que o CDI, significa que teria sido mais vantajoso (e seguro) deixar o dinheiro em uma conta digital ou Tesouro Selic.<br><br>
-            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É o indicador oficial da inflação. Ele mostra o quanto o custo de vida aumentou. O rendimento que ultrapassa o IPCA é chamado de "Lucro Real" (ganho de poder de compra).<br><br>
-            • <b>Ibovespa (Mercado):</b> É a carteira teórica das ações mais negociadas na bolsa brasileira (B3). Ele serve para você entender se a empresa escolhida performou melhor ou pior do que a média de mercado.
+            • <b>CDI (Certificado de Depósito Interbancário):</b> É o principal termômetro da Renda Fixa no Brasil. Se a sua ação rende menos que o CDI, teria sido mais vantajoso (e seguro) deixar o dinheiro no Tesouro Selic.<br><br>
+            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É a inflação oficial. O rendimento acima do IPCA é o seu "Lucro Real".<br><br>
+            • <b>Ibovespa (Mercado):</b> A média das principais ações da B3. Serve para ver se você bateu a média do mercado.
             </div>
             """, unsafe_allow_html=True)
             
