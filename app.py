@@ -49,9 +49,8 @@ mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True)
 
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
-# 3. FUNÇÃO BCB ISOLADA (CDI)
+# 3. FUNÇÕES DE SUPORTE
 def busca_indice_bcb(codigo, d_inicio, d_fim):
-    # Formatação das datas para a API do BCB (dd/mm/aaaa)
     s = d_inicio.strftime('%d/%m/%Y')
     e = d_fim.strftime('%d/%m/%Y')
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={s}&dataFinal={e}"
@@ -61,90 +60,97 @@ def busca_indice_bcb(codigo, d_inicio, d_fim):
         df['data'] = pd.to_datetime(df['data'], dayfirst=True)
         df['valor'] = pd.to_numeric(df['valor']) / 100
         df = df.set_index('data')
-        # Calcula o fator acumulado (1 + taxa).cumprod()
         return (1 + df['valor']).cumprod()
     except:
         return pd.Series(dtype='float64')
 
-# 4. CARREGAMENTO DOS DADOS (YFINANCE)
 @st.cache_data(show_spinner="Sincronizando Mercado...")
-def carregar_dados_acao(t):
+def carregar_dados_completos(t):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
         tk = yf.Ticker(t_sa)
         df = tk.history(start="2005-01-01")[['Close', 'Dividends']]
         if df.empty: return None
         df.index = df.index.tz_localize(None)
-        # Fator Retorno Total da Ação
+        # Fator Retorno Total (Coração da simulação)
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         return df
     except: return None
 
-# 5. LOGICA PRINCIPAL
+# 4. LOGICA PRINCIPAL
 if ticker_input:
-    df_acao = carregar_dados_acao(ticker_input)
+    df_acao = carregar_dados_completos(ticker_input)
     
     if df_acao is not None:
-        # Recorte do período selecionado
         df_v = df_acao.loc[pd.to_datetime(data_inicio):pd.to_datetime(data_fim)].copy()
         
         if not df_v.empty:
-            # Rebase da Ação
-            df_v["Total_Fact"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
+            # Rebase para o Gráfico
+            df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
             df_v["Price_Base"] = df_v["Close"] / df_v["Close"].iloc[0]
             
             fig = go.Figure()
-
-            # --- CAMADA 1: AÇÃO (ÁREAS) ---
             fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Price_Base"]-1)*100, stackgroup='one', name='Valorização', fillcolor='rgba(31, 119, 180, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
-            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-df_v["Price_Base"])*100, stackgroup='one', name='Dividendos', fillcolor='rgba(218, 165, 32, 0.4)', line=dict(width=0)))
+            fig.add_trace(go.Scatter(x=df_v.index, y=(df_v["Total_Fact_Chart"]-1)*100, name='RETORNO TOTAL', line=dict(color='black', width=3)))
 
-            # --- CAMADA 2: CDI (RECONSTRUÍDO DO ZERO) ---
             if mostrar_cdi:
-                serie_cdi = busca_indice_bcb(12, data_inicio, data_fim)
-                if not serie_cdi.empty:
-                    cdi_rebase = (serie_cdi / serie_cdi.iloc[0] - 1) * 100
-                    fig.add_trace(go.Scatter(x=cdi_rebase.index, y=cdi_rebase, name='CDI (Renda Fixa)', line=dict(color='gray', width=2, dash='dash')))
+                s_cdi = busca_indice_bcb(12, data_inicio, data_fim)
+                if not s_cdi.empty:
+                    fig.add_trace(go.Scatter(x=s_cdi.index, y=(s_cdi/s_cdi.iloc[0]-1)*100, name='CDI', line=dict(color='gray', width=2, dash='dash')))
 
-            # --- CAMADA 3: IPCA (RECONSTRUÍDO DO ZERO) ---
             if mostrar_ipca:
-                # IPCA é mensal, dividimos por 21 para aproximar a curva diária no gráfico
-                serie_ipca = busca_indice_bcb(433, data_inicio, data_fim)
-                if not serie_ipca.empty:
-                    # Ajuste fino para o IPCA não ficar "escada"
-                    ipca_rebase = (serie_ipca / serie_ipca.iloc[0] - 1) * 100
-                    fig.add_trace(go.Scatter(x=ipca_rebase.index, y=ipca_rebase, name='IPCA (Inflação)', line=dict(color='red', width=2)))
+                s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
+                if not s_ipca.empty:
+                    fig.add_trace(go.Scatter(x=s_ipca.index, y=(s_ipca/s_ipca.iloc[0]-1)*100, name='IPCA', line=dict(color='red', width=2)))
 
-            # --- CAMADA 4: IBOVESPA ---
             if mostrar_ibov:
                 try:
-                    ibov = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)['Close']
-                    if not ibov.empty:
-                        ibov.index = ibov.index.tz_localize(None)
-                        ibov_rebase = (ibov / ibov.iloc[0] - 1) * 100
-                        fig.add_trace(go.Scatter(x=ibov_rebase.index, y=ibov_rebase, name='Ibovespa (Mercado)', line=dict(color='orange', width=2)))
+                    ibov = yf.download("^BVSP", start=data_inicio, end=data_fim, progress=False)
+                    # Tratamento para garantir que pegamos a coluna correta independente do formato
+                    ibov_c = ibov['Close'].iloc[:, 0] if isinstance(ibov['Close'], pd.DataFrame) else ibov['Close']
+                    if not ibov_c.empty:
+                        ibov_c.index = ibov_c.index.tz_localize(None)
+                        fig.add_trace(go.Scatter(x=ibov_c.index, y=(ibov_c/ibov_c.iloc[0]-1)*100, name='Ibovespa', line=dict(color='orange', width=2)))
                 except: pass
 
-            # CONFIGURAÇÃO VISUAL FINAL
-            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
+            fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig, use_container_width=True)
 
-            # CARDS DE RESULTADO (Usando a mesma lógica de segurança)
-            st.subheader(f"💰 Patrimônio Estimado (Aportes de {formata_br(valor_aporte)})")
-            # ... (Lógica de simulação simplificada para garantir performance)
-            st.info("Os cards abaixo mostram o acúmulo histórico baseados no Retorno Total da ação (Preço + Dividendos).")
+            # 5. CARDS DE PATRIMÔNIO (RESTALRADOS)
+            st.subheader(f"💰 Simulação de Aportes Mensais (R$ {valor_aporte:,.2f})")
             
+            def calcular_patrimonio(df_full, valor_mensal, anos):
+                n_meses = anos * 12
+                # Pegamos os últimos meses disponíveis
+                df_calc = df_full.tail(n_meses * 22) # Aproximação de dias úteis
+                if len(df_calc) < 20: return 0, 0
+                
+                df_calc['month'] = df_calc.index.to_period('M')
+                datas_aporte = df_calc.groupby('month').head(1).index[-n_meses:]
+                
+                total_cotas = 0
+                for d in datas_aporte:
+                    preco = df_full.loc[d, 'Close']
+                    total_cotas += valor_mensal / preco
+                
+                # O valor final considera o crescimento total (preço + dividendos reinvestidos)
+                fator_reinvestimento = df_full["Total_Fact"].iloc[-1] / df_full["Total_Fact"].loc[datas_aporte[0]]
+                valor_final = total_cotas * df_full["Close"].iloc[-1] * (fator_reinvestimento / (df_full["Close"].iloc[-1] / df_full["Close"].loc[datas_aporte[0]]))
+                
+                return valor_final, n_meses * valor_mensal
+
+            col1, col2, col3 = st.columns(3)
+            for anos, col in [(10, col1), (5, col2), (1, col3)]:
+                vf, vi = calcular_patrimonio(df_acao, valor_aporte, anos)
+                with col:
+                    if vf > 0:
+                        st.metric(f"Acúmulo em {anos} anos", formata_br(vf))
+                        st.caption(f"Total Investido: {formata_br(vi)}")
+                        st.caption(f"Lucro: {formata_br(vf-vi)}")
+
             # GLOSSÁRIO
-            st.markdown("""
-            <div class="glossario">
-            📌 <b>Entenda os indicadores:</b><br>
-            • <b>CDI (Certificado de Depósito Interbancário):</b> Representa o rendimento médio da Renda Fixa pós-fixada. É a referência mínima para um investidor conservador.<br>
-            • <b>IPCA (Índice de Preços ao Consumidor Amplo):</b> É a medida oficial da inflação no Brasil. Quando seu lucro real é positivo, significa que seu dinheiro ganhou poder de compra.<br>
-            • <b>Ibovespa (Mercado):</b> O principal índice da B3, composto pelas empresas mais negociadas.
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown("""<div class="glossario">📌 <b>Indicadores:</b> CDI (Renda Fixa), IPCA (Inflação) e Ibovespa (Bolsa Brasileira).</div>""", unsafe_allow_html=True)
             
-    else: st.error("Ticker não encontrado ou erro de conexão.")
-else:
-    st.info("💡 Digite um Ticker na barra lateral para começar.")
+    else: st.error("Ticker não encontrado.")
+else: st.info("💡 Digite um Ticker para começar.")
