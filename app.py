@@ -5,7 +5,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
 
-# 1. CONFIGURAÇÃO DA PÁGINA (Deve ser o primeiro comando)
+# 1. CONFIGURAÇÃO DA PÁGINA (Sempre o primeiro comando)
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
 st.markdown("""
@@ -29,22 +29,20 @@ st.sidebar.markdown("""
 <b>Como usar:</b><br>
 1. Digite o ticker e o aporte.<br>
 2. Ajuste o período de análise.<br>
-3. Use os filtros para comparar índices.
+3. Clique em <b>Analisar Patrimônio</b>.
 </div>
 """, unsafe_allow_html=True)
 
 ticker_input = st.sidebar.text_input("Digite o Ticker (ex: BBAS3, WEGE3)", "").upper().strip()
 valor_aporte = st.sidebar.number_input("Valor do aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-# Filtro de Datas com formato BR
 st.sidebar.subheader("Período da Análise")
 d_ini_padrao = date(2010, 1, 1)
-d_fim_padrao = date.today() - timedelta(days=1) # Evita erro de hoje sem fechamento
+d_fim_padrao = date.today() - timedelta(days=2) # 2 dias para garantir dados fechados
 
 data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
 data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
 
-# Checkboxes de exibição
 st.sidebar.subheader("Exibir no Gráfico")
 mostrar_cdi = st.sidebar.checkbox("CDI", value=True)
 mostrar_ipca = st.sidebar.checkbox("Inflação (IPCA)", value=True)
@@ -56,7 +54,7 @@ btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 def get_bcb(codigo, d_ini, d_f, fallback):
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados?formato=json&dataInicial={d_ini}&dataFinal={d_f}"
     try:
-        res = requests.get(url, timeout=10).json()
+        res = requests.get(url, timeout=15).json()
         df_res = pd.DataFrame(res)
         df_res['valor'] = pd.to_numeric(df_res['valor']) / 100
         df_res['data'] = pd.to_datetime(df_res['data'], dayfirst=True)
@@ -68,28 +66,34 @@ def get_bcb(codigo, d_ini, d_f, fallback):
 def carregar_tudo(t, d_ini, d_fim):
     t_sa = t if ".SA" in t else t + ".SA"
     try:
-        # Busca Ação e Ibovespa
-        dados_acao = yf.download(t_sa, start=d_ini, end=d_fim, progress=False)
-        dados_ibov = yf.download("^BVSP", start=d_ini, end=d_fim, progress=False)
-        
-        if dados_acao.empty: return None
-        
-        df = dados_acao[['Close']].copy()
-        # Busca dividendos separadamente para garantir precisão
+        # Tenta buscar dados da ação
         ticker_obj = yf.Ticker(t_sa)
-        df['Dividends'] = ticker_obj.dividends.reindex(df.index, fill_value=0)
+        df_hist = ticker_obj.history(start=d_ini, end=d_fim)
         
+        if df_hist.empty:
+            return None
+            
+        df = df_hist[['Close']].copy()
+        df['Dividends'] = df_hist['Dividends'] if 'Dividends' in df_hist else 0
         df.index = df.index.tz_localize(None)
+        
+        # Cálculos de Performance
         df["Price_Pct"] = (df["Close"] / df["Close"].iloc[0]) - 1
         df["Total_Fact"] = (1 + df["Close"].pct_change().fillna(0) + (df["Dividends"]/df["Close"]).fillna(0)).cumprod()
         df["Total_Pct"] = df["Total_Fact"] - 1
         df["Div_Pct"] = df["Total_Pct"] - df["Price_Pct"]
         
-        if not dados_ibov.empty:
-            ibov_close = dados_ibov['Close'].copy()
-            ibov_close.index = ibov_close.index.tz_localize(None)
-            df["IBOV_Acum"] = (ibov_close / ibov_close.iloc[0]).reindex(df.index).ffill() - 1
-        
+        # Busca Ibovespa separadamente
+        try:
+            ibov = yf.download("^BVSP", start=d_ini, end=d_fim, progress=False)
+            if not ibov.empty:
+                ibov_c = ibov['Close'].copy()
+                ibov_c.index = ibov_c.index.tz_localize(None)
+                df["IBOV_Acum"] = (ibov_c / ibov_c.iloc[0]).reindex(df.index).ffill() - 1
+        except:
+            pass # Se o Ibov falhar, o gráfico continua sem ele
+            
+        # Benchmarks BCB
         s, e = df.index[0].strftime('%d/%m/%Y'), df.index[-1].strftime('%d/%m/%Y')
         df_ipca = get_bcb(433, s, e, 0.004)
         ipca_f = df_ipca.reindex(pd.date_range(df.index[0], df.index[-1]), method='ffill')
@@ -104,10 +108,10 @@ def carregar_tudo(t, d_ini, d_fim):
     except:
         return None
 
-# 4. LÓGICA DE EXIBIÇÃO
+# 4. EXIBIÇÃO
 if not ticker_input:
     st.info("💡 Digite um **Ticker** e clique em **Analisar Patrimônio**.")
-elif btn_analisar or ticker_input:
+elif btn_analisar:
     df = carregar_tudo(ticker_input, data_inicio, data_fim)
     if df is not None:
         fig = go.Figure()
@@ -122,41 +126,28 @@ elif btn_analisar or ticker_input:
             fig.add_trace(go.Scatter(x=df.index, y=df["IBOV_Acum"]*100, name='Ibovespa', line=dict(color='orange', width=2)))
             
         fig.add_trace(go.Scatter(x=df.index, y=df["Total_Pct"]*100, name='RETORNO TOTAL', line=dict(color='black', width=2.5)))
-
-        fig.update_layout(
-            template="plotly_white", hovermode="x unified",
-            yaxis=dict(side="right", ticksuffix="%"),
-            margin=dict(l=20, r=20, t=50, b=20),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
-        )
+        fig.update_layout(template="plotly_white", hovermode="x unified", yaxis=dict(side="right", ticksuffix="%"), margin=dict(l=20, r=20, t=50, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5))
         st.plotly_chart(fig, use_container_width=True)
 
         # 5. RESULTADOS
         st.subheader(f"💰 Simulação de Aportes ({data_inicio.strftime('%d/%m/%Y')} - {data_fim.strftime('%d/%m/%Y')})")
         
-        def simular_periodo(df_orig, v_mes):
-            df_sim = df_orig.copy()
-            df_sim['m'] = df_sim.index.to_period('M')
-            datas_aporte = df_sim.groupby('m').head(1).index
-            n_aportes = len(datas_aporte)
-            if n_aportes < 2: return 0, 0, 0
+        df_sim = df.copy()
+        df_sim['m'] = df_sim.index.to_period('M')
+        datas_aporte = df_sim.groupby('m').head(1).index
+        if len(datas_aporte) >= 2:
+            cotas = sum(valor_aporte / df.loc[d, 'Close'] for d in datas_aporte)
+            f_total = df["Total_Fact"].iloc[-1] / df["Total_Fact"].iloc[0]
+            f_preco = df["Close"].iloc[-1] / df["Close"].iloc[0]
+            v_final = cotas * df["Close"].iloc[-1] * (f_total/f_preco)
+            v_nom = len(datas_aporte) * valor_aporte
+            l_real = v_final - sum(valor_aporte * (df['IPCA_Fator'].iloc[-1] / df.loc[d, 'IPCA_Fator']) for d in datas_aporte)
             
-            cotas = sum(v_mes / df_orig.loc[d, 'Close'] for d in datas_aporte)
-            f_total = (1 + df_orig['Close'].pct_change().fillna(0) + (df_orig['Dividends']/df_orig['Close']).fillna(0)).cumprod().iloc[-1]
-            f_preco = (df_orig['Close'].iloc[-1] / df_orig['Close'].iloc[0])
-            valor_final = cotas * df_orig['Close'].iloc[-1] * (f_total/f_preco)
-            
-            invest_nominal = n_aportes * v_mes
-            invest_corrigido = sum(v_mes * (df_orig['IPCA_Fator'].iloc[-1] / df_orig.loc[d, 'IPCA_Fator']) for d in datas_aporte)
-            return valor_final, invest_nominal, valor_final - invest_corrigido
-
-        v_f, v_n, l_r = simular_periodo(df, valor_aporte)
-        
-        c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Patrimônio Acumulado", formata_br(v_f))
-        with c2: st.write(f"**Total Investido:** {formata_br(v_n)}")
-        with c3: 
-            st.caption(f"📉 **Lucro Líquido Real:** {formata_br(l_r)}")
-            st.caption("(Descontada a inflação no período)")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Patrimônio Acumulado", formata_br(v_final))
+            with c2: st.write(f"**Total Investido:** {formata_br(v_nom)}")
+            with c3: 
+                st.caption(f"📉 **Lucro Líquido Real:** {formata_br(l_real)}")
+                st.caption("(Descontada a inflação)")
     else:
-        st.error(f"Erro ao buscar dados para '{ticker_input}'. Tente ajustar as datas.")
+        st.error(f"Erro ao buscar '{ticker_input}'. Verifique o código e tente datas mais antigas.")
