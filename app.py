@@ -411,10 +411,11 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# Defaults conforme pedido:
+# Defaults:
 # - Fim = hoje - 1 dia
 # - Início = fim - 10 anos - 1 dia
-d_fim_padrao = date.today() - timedelta(days=1)
+hoje = date.today()
+d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
 with st.sidebar.form("form_simulador"):
@@ -423,7 +424,8 @@ with st.sidebar.form("form_simulador"):
 
     st.subheader("Período da Simulação")
     data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
-    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
+    # ✅ Fim não pode passar hoje
+    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
 
     btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
 
@@ -484,7 +486,7 @@ if not st.session_state.get("analysis_ready", False):
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
 Este simulador calcula o acúmulo de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente os proventos disponíveis na base de dados (ex.: <b>dividendos</b> / <b>JCP</b>).<br><br>
-<b>Eventos corporativos considerados (quando disponíveis na fonte):</b> <b>JCP</b>, <b>dividendos</b>, <b>bonificações</b>, <b>splits</b>, <b>grupamentos</b> e demais efeitos financeiros registrados no provedor de dados.
+<b>Eventos corporativos considerados (quando disponíveis na fonte):</b> <b>dividendos</b>, <b>JCP</b>, <b>bonificações</b>, <b>splits</b>, <b>grupamentos</b> e demais efeitos financeiros registrados pelo provedor de dados.
 </div>
 <div style="font-size:0.95rem; color:#0f172a;">
 🙂 Para começar, siga as instruções conforme as orientações da <b>barra da esquerda</b>.
@@ -517,7 +519,7 @@ st.caption(
     f"Simulação carregada: **{ticker_exec}** | Aporte mensal: **{formata_br(valor_aporte_exec)}** | Período: **{data_inicio_exec.strftime('%d/%m/%Y')} → {data_fim_exec.strftime('%d/%m/%Y')}**"
 )
 
-# Recorte do ativo na janela (pode ficar vazio no começo => gráfico com “branco”)
+# Recorte do ativo na janela
 df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
 if df_v.empty:
     st.error("Não há dados do ativo no período selecionado (Yahoo Finance). Tente ampliar/alterar o intervalo.")
