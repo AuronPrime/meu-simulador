@@ -6,6 +6,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import date, timedelta
 import time
+import calendar
 
 # =========================================================
 # 1) CONFIGURAÇÃO DA PÁGINA
@@ -60,6 +61,18 @@ st.markdown(
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
+
+    .warn-box {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-left: 5px solid #fb923c;
+        padding: 12px 14px;
+        border-radius: 10px;
+        color: #7c2d12;
+        margin: 10px 0 0 0;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -71,56 +84,7 @@ def formata_br(valor: float) -> str:
 st.title("Simulador de Acúmulo de Patrimônio")
 
 # =========================================================
-# 2) BARRA LATERAL (FORM + INSTRUÇÕES)
-# =========================================================
-
-# Data padrão: fim = hoje - 2 dias; início = pelo menos 366 dias antes do fim
-# (366 para garantir 1 ano mesmo em anos bissextos)
-d_fim_padrao = date.today() - timedelta(days=2)
-d_ini_padrao = d_fim_padrao - timedelta(days=366)
-
-st.sidebar.markdown(
-    """
-<div class="instrucoes">
-<b>Como usar (rápido):</b><br>
-1) Digite o <b>Ticker</b> (ex.: <i>PETR4</i>, <i>VALE3</i>).<br>
-2) Defina o <b>aporte mensal</b>.<br>
-3) Escolha <b>Início</b> e <b>Fim</b> da simulação.<br>
-4) Clique em <b>🔍 Analisar Patrimônio</b>.<br>
-5) Depois, use os toggles de <b>benchmarks</b> para comparar no gráfico e nos cards.
-<div class="obs">📌 <b>Obs.:</b> a data de <b>Início</b> é tratada como o <b>1º aporte mensal</b>. Se cair em dia sem pregão, o aporte é executado no <b>próximo pregão</b>.</div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-with st.sidebar.form("form_simulador"):
-    ticker_input = st.text_input("Digite o Ticker", "").upper().strip()
-    valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
-
-    st.subheader("Período da Simulação")
-    data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
-    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
-
-    btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
-
-st.sidebar.subheader("Benchmarks")
-mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI/Selic)", value=True, key="mostrar_rf")
-mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True, key="mostrar_ipca")
-mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True, key="mostrar_ibov")
-
-st.sidebar.markdown(
-    """
-<div style="font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
-Desenvolvido por: <br>
-<a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank" style="color: #1f77b4; text-decoration: none; font-weight: bold;">IG: Ramoon.Bastos</a>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-# =========================================================
-# 3) FUNÇÕES DE SUPORTE
+# 2) FUNÇÕES DE SUPORTE (índices / pregão / datas de aporte)
 # =========================================================
 
 def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30) -> pd.DataFrame:
@@ -132,39 +96,29 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30)
 
     r = requests.get(url, params=params, headers=headers, timeout=timeout)
     if r.status_code != 200:
-        # força retry no chamador (muito comum quando o intervalo excede limites / instabilidade)
         raise RuntimeError(f"BCB/SGS HTTP {r.status_code}")
 
-    try:
-        df = pd.DataFrame(r.json())
-    except Exception as e:
-        raise RuntimeError("BCB/SGS JSON inválido") from e
-
+    df = pd.DataFrame(r.json())
     if df.empty:
         return pd.DataFrame(columns=["data", "valor"])
-
     return df
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     """
     Retorna um índice acumulado (nível) para a série do BCB.
-
-    Observação importante (robustez): o BCB passou a limitar consultas longas (por período) em algumas séries,
-    retornando erro se o intervalo exceder ~10 anos. Para evitar isso, a função faz download em blocos.
-
-    - CDI (12) costuma ser diária (taxa % no dia)
-    - IPCA (433) costuma ser mensal (variação % do período)
+    Divide downloads em blocos para evitar instabilidades/limites do endpoint.
     """
     if d_inicio is None or d_fim is None or d_inicio > d_fim:
         return pd.Series(dtype="float64")
 
-    # Divide em blocos de até 10 anos (menos 1 dia) para evitar erro do endpoint.
     start = pd.Timestamp(d_inicio)
     end = pd.Timestamp(d_fim)
 
-    partes: list[pd.DataFrame] = []
+    partes = []
     cur = start
+    # Blocos de até 10 anos (por robustez do endpoint), mas SEM limitar o usuário:
+    # apenas fazemos várias chamadas.
     while cur <= end:
         chunk_end = min(end, (cur + pd.DateOffset(years=10)) - pd.Timedelta(days=1))
         d1 = cur.date()
@@ -182,7 +136,6 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
                 time.sleep(i + 1)
 
         if not ok:
-            # Se esse bloco falhar totalmente, aborta (melhor do que inventar dados)
             return pd.Series(dtype="float64")
 
         cur = chunk_end + pd.Timedelta(days=1)
@@ -194,9 +147,7 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     if df_all.empty:
         return pd.Series(dtype="float64")
 
-    # Parse
     df_all["data"] = pd.to_datetime(df_all["data"], dayfirst=True, errors="coerce")
-    # Aceita tanto '.' quanto ',' como separador decimal
     df_all["valor"] = df_all["valor"].astype(str).str.replace(",", ".", regex=False)
     df_all["valor"] = pd.to_numeric(df_all["valor"], errors="coerce") / 100.0
 
@@ -204,7 +155,6 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     if df_all.empty:
         return pd.Series(dtype="float64")
 
-    # Remove duplicatas (pode acontecer na borda dos blocos)
     s = df_all["valor"].astype(float)
     s = s[~s.index.duplicated(keep="last")]
 
@@ -212,12 +162,11 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
-    """Tenta carregar CDI; se falhar, usa Selic como proxy de renda fixa."""
+    """Tenta carregar CDI; se falhar, usa Selic como proxy."""
     s_cdi = busca_indice_bcb(12, d_inicio, d_fim)
     if s_cdi is not None and not s_cdi.empty:
         return s_cdi, "CDI"
 
-    # fallback: Selic diária (código 11)
     s_selic = busca_indice_bcb(11, d_inicio, d_fim)
     if s_selic is not None and not s_selic.empty:
         return s_selic, "Selic (proxy CDI)"
@@ -226,17 +175,7 @@ def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
 
 def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
     """
-    Corrige o problema do "degrau" falso de split:
-    Em alguns casos, a fonte (Yahoo) já entrega o Close historicamente contínuo (pré-ajustado),
-    mas ainda marca o split em 'Stock Splits'. Se aplicarmos o split novamente, cria salto artificial.
-
-    Estratégia:
-    - Para dias com Stock Splits != 1:
-      Comparamos o ratio real (Close_t / Close_{t-1}) com:
-        a) esperado se o Close NÃO estiver ajustado: ~ 1/split
-        b) esperado se o Close JÁ estiver ajustado: ~ 1
-      Se estiver mais próximo de 1, NÃO aplicamos o split (split_efetivo=1).
-      Se estiver mais próximo de 1/split, aplicamos (split_efetivo=split).
+    Heurística anti "degrau" falso de split (dupla correção).
     """
     close = df["Close"].astype(float)
     prev = close.shift(1)
@@ -260,12 +199,10 @@ def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_dados_completos(t: str) -> pd.DataFrame | None:
     """
-    Retorna DF com:
+    DF com:
       Close, Dividends, Stock Splits,
       Price_Fact (preço ajustado por splits/grupamentos),
       Total_Fact (retorno total: preço + dividendos/JCP reinvestidos + splits/grupamentos).
-
-    Obs: o split é aplicado com heurística "anti-degrau" para evitar dupla correção.
     """
     if not t:
         return None
@@ -274,7 +211,8 @@ def carregar_dados_completos(t: str) -> pd.DataFrame | None:
 
     try:
         tk = yf.Ticker(t_sa)
-        df = tk.history(start="2005-01-01", auto_adjust=False, actions=True, interval="1d")
+        # deixa o usuário escolher qualquer ano; Yahoo retorna o que tiver
+        df = tk.history(start="1900-01-01", auto_adjust=False, actions=True, interval="1d")
 
         if df is None or df.empty:
             return None
@@ -312,8 +250,13 @@ def carregar_dados_completos(t: str) -> pd.DataFrame | None:
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
+    """
+    Ibovespa (Close) para plot/cálculo como benchmark.
+    """
     try:
-        df = yf.download("^BVSP", start=d_inicio, end=d_fim + timedelta(days=1), progress=False, auto_adjust=False)
+        # evitar downloads absurdos se o usuário escolher data muito antiga
+        start = max(pd.Timestamp(d_inicio), pd.Timestamp("1990-01-01"))
+        df = yf.download("^BVSP", start=start.date(), end=d_fim + timedelta(days=1), progress=False, auto_adjust=False)
         if df is None or df.empty:
             return pd.Series(dtype="float64")
         if isinstance(df.columns, pd.MultiIndex):
@@ -337,45 +280,62 @@ def proximo_pregao_a_partir(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestam
         return None
     return df_index[pos]
 
-def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fim: pd.Timestamp) -> pd.DatetimeIndex:
+def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fim_exclusivo: pd.Timestamp) -> pd.DatetimeIndex:
+    """
+    Gera 1 aporte por mês, ancorado no dia do mês do dt_inicio.
+    - Se o mês não tiver o dia (29/30/31), usa o último dia do mês.
+    - Se cair em dia sem pregão, executa no próximo pregão (bfill).
+    - dt_fim_exclusivo é DATA DE AVALIAÇÃO (fim EXCLUSIVO):
+        1 ano => 12 aportes, 5 anos => 60, 10 anos => 120
+    """
     if len(df_index) == 0:
         return pd.DatetimeIndex([])
 
-    dt_inicio = pd.to_datetime(dt_inicio)
-    dt_fim = pd.to_datetime(dt_fim)
+    dt_inicio = pd.to_datetime(dt_inicio).normalize()
+    dt_fim_exclusivo = pd.to_datetime(dt_fim_exclusivo).normalize()
+
+    if dt_inicio >= dt_fim_exclusivo:
+        return pd.DatetimeIndex([])
+
+    anchor_day = dt_inicio.day
+    year, month = dt_inicio.year, dt_inicio.month
 
     datas_teoricas = []
     cur = dt_inicio
-    for _ in range(2000):
-        if cur > dt_fim:
+    for _ in range(5000):
+        if cur >= dt_fim_exclusivo:
             break
+
         datas_teoricas.append(cur)
-        cur = cur + pd.DateOffset(months=1)
+
+        # avança 1 mês mantendo o dia âncora (ou último dia do mês)
+        month += 1
+        if month == 13:
+            month = 1
+            year += 1
+        last_day = calendar.monthrange(year, month)[1]
+        day = min(anchor_day, last_day)
+        cur = pd.Timestamp(year=year, month=month, day=day)
 
     datas_exec = []
     for d in datas_teoricas:
         d_exec = proximo_pregao_a_partir(df_index, d)
         if d_exec is None:
             continue
-        if d_exec <= dt_fim:
+        if d_exec < dt_fim_exclusivo:
             datas_exec.append(d_exec)
 
     if not datas_exec:
         return pd.DatetimeIndex([])
 
-    return pd.DatetimeIndex(pd.Index(datas_exec).unique().sort_values())
+    # Não remove duplicatas: em casos raríssimos de colisão, são aportes distintos.
+    return pd.DatetimeIndex(datas_exec)
 
-def calc_valor_corrigido_por_indice(
-    valor_mensal: float,
-    datas_aporte: pd.DatetimeIndex,
-    serie_indice: pd.Series,
-    data_ref: pd.Timestamp,
-) -> float | None:
+def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.DatetimeIndex, serie_indice: pd.Series, data_ref: pd.Timestamp) -> float | None:
     if serie_indice is None or serie_indice.empty:
         return None
 
     s = pd.Series(serie_indice).dropna().sort_index()
-
     end = s.asof(data_ref)
     if pd.isna(end):
         return None
@@ -400,11 +360,20 @@ def calcular_horizonte(
 
     idx = df_full.index
 
+    # data_ref = último pregão <= dt_ref_target
     data_ref = ultimo_pregao_ate(idx, dt_ref_target)
     if data_ref is None:
         return None
 
-    datas_aporte = gerar_datas_aporte_mensal(idx, dt_inicio_user, data_ref)
+    # Evita "empilhar" aportes antes da série existir:
+    # início efetivo = próximo pregão a partir do início escolhido (ou 1º pregão do DF)
+    dt_inicio_eff = proximo_pregao_a_partir(idx, dt_inicio_user)
+    if dt_inicio_eff is None:
+        return None
+    if dt_inicio_eff >= data_ref:
+        return None
+
+    datas_aporte = gerar_datas_aporte_mensal(idx, dt_inicio_eff, data_ref)  # fim exclusivo = data_ref
     if len(datas_aporte) == 0:
         return None
 
@@ -422,6 +391,7 @@ def calcular_horizonte(
 
     return {
         "data_ref": data_ref,
+        "dt_inicio_eff": dt_inicio_eff,
         "vf": vf_ativo,
         "vi": investido,
         "lucro": lucro,
@@ -430,6 +400,83 @@ def calcular_horizonte(
         "v_ibov": v_ibov,
         "n_aportes": int(len(datas_aporte)),
     }
+
+def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timestamp) -> pd.Series:
+    """
+    Retorna série em % acumulado ancorada em dt_base (mesma base do ativo),
+    usando asof (último valor <= data) quando necessário.
+    """
+    if s is None or s.empty:
+        return pd.Series(dtype="float64")
+    s = pd.Series(s).dropna().sort_index()
+
+    base = s.asof(dt_base)
+    if pd.isna(base):
+        s2 = s.loc[(s.index >= dt_base) & (s.index <= dt_end)]
+        if s2.empty:
+            return pd.Series(dtype="float64")
+        base = s2.iloc[0]
+
+    s_plot = s.loc[(s.index >= dt_base) & (s.index <= dt_end)]
+    if s_plot.empty:
+        return pd.Series(dtype="float64")
+
+    return (s_plot / float(base) - 1.0) * 100.0
+
+# =========================================================
+# 3) BARRA LATERAL (FORM + INSTRUÇÕES)
+# =========================================================
+
+st.sidebar.markdown(
+    """
+<div class="instrucoes">
+<b>Como usar (rápido):</b><br>
+1) Digite o <b>Ticker</b> (ex.: <i>PETR4</i>, <i>VALE3</i>).<br>
+2) Defina o <b>aporte mensal</b>.<br>
+3) Escolha <b>Início</b> e <b>Fim</b> da simulação.<br>
+4) Clique em <b>🔍 Analisar Patrimônio</b>.<br>
+5) Use os toggles de <b>benchmarks</b> para comparar no gráfico e nos cards.
+<div class="obs">📌 <b>Obs.:</b> a data de <b>Início</b> é tratada como o <b>1º aporte</b>. Se cair em dia sem pregão, o aporte é executado no <b>próximo pregão</b>.</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# Defaults
+d_fim_padrao = date.today() - timedelta(days=2)
+d_ini_auto = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
+
+with st.sidebar.form("form_simulador"):
+    ticker_input = st.text_input("Digite o Ticker", "").upper().strip()
+    valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
+
+    st.subheader("Período da Simulação")
+    auto_periodo = st.checkbox("Auto: Início = Fim − 10 anos − 1 dia", value=True)
+
+    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY")
+
+    if auto_periodo:
+        data_inicio = (pd.Timestamp(data_fim) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
+        st.date_input("Início", data_inicio, format="DD/MM/YYYY", disabled=True)
+    else:
+        data_inicio = st.date_input("Início", d_ini_auto, format="DD/MM/YYYY")
+
+    btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
+
+st.sidebar.subheader("Benchmarks")
+mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI/Selic)", value=True, key="mostrar_rf")
+mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True, key="mostrar_ipca")
+mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True, key="mostrar_ibov")
+
+st.sidebar.markdown(
+    """
+<div style="font-size: 0.85rem; color: #64748b; margin-top: 25px; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 15px;">
+Desenvolvido por: <br>
+<a href="https://www.instagram.com/ramoon.bastos?igsh=MTFiODlnZ28ybHFqdw%3D%3D&utm_source=qr" target="_blank" style="color: #1f77b4; text-decoration: none; font-weight: bold;">IG: Ramoon.Bastos</a>
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 # =========================================================
 # 4) EXECUÇÃO CONTROLADA (botão) + PERSISTÊNCIA
@@ -445,12 +492,16 @@ if btn_analisar:
         st.stop()
 
     with st.spinner("Sincronizando dados de mercado..."):
+        # índices do BCB podem cobrir períodos longos (chunk interno)
         s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
+
         df_acao = carregar_dados_completos(ticker_input)
+
+        # Ibov: clamp interno para evitar downloads enormes
         s_ibov = carregar_ibov(data_inicio, data_fim)
 
-    if df_acao is None:
+    if df_acao is None or df_acao.empty:
         st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
         st.stop()
 
@@ -472,8 +523,8 @@ if not st.session_state.get("analysis_ready", False):
         """
 <div class="resumo-objetivo">
 👋 <b>Bem-vindo!</b><br>
-O simulador calcula o acúmulo real de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP).<br><br>
-<b>Precisão técnica:</b> construímos um índice de <b>Retorno Total</b> a partir de <b>Dividendos</b> e <b>Splits/Grupamentos</b>, neutralizando distorções causadas por eventos corporativos (incluindo casos em que a fonte entrega preços já ajustados).
+O simulador calcula o acúmulo de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente proventos (Div/JCP).<br><br>
+<b>Nota:</b> O gráfico mostra retorno (%) do índice. Os cards usam aportes mensais (DCA), então é possível o resultado final superar um benchmark mesmo quando a linha do ativo ficou abaixo no gráfico.
 </div>
 <div style="font-size:0.95rem; color:#0f172a;">
 🙂 Para começar, siga as instruções conforme as orientações da <b>barra da esquerda</b>.
@@ -499,53 +550,82 @@ nome_rf = st.session_state.get("nome_rf", "Renda Fixa")
 s_ipca = st.session_state.get("s_ipca", pd.Series(dtype="float64"))
 s_ibov = st.session_state.get("s_ibov", pd.Series(dtype="float64"))
 
-dt_ini = pd.to_datetime(data_inicio_exec)
-dt_fim = pd.to_datetime(data_fim_exec)
+dt_ini_user = pd.to_datetime(data_inicio_exec).normalize()
+dt_fim_user = pd.to_datetime(data_fim_exec).normalize()
 
-df_v = df_acao.loc[(df_acao.index >= dt_ini) & (df_acao.index <= dt_fim)].copy()
-if df_v.empty or len(df_v) < 5:
-    st.error("Período selecionado sem dados suficientes para o ativo.")
-    st.stop()
-
-df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
-df_v["Price_Fact_Chart"] = df_v["Price_Fact"] / df_v["Price_Fact"].iloc[0]
+# recorte do ativo dentro da janela (pode ficar vazio no começo => “branco” no gráfico)
+df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
 
 st.caption(
     f"Simulação carregada: **{ticker_exec}** | Aporte mensal: **{formata_br(valor_aporte_exec)}** | Período: **{data_inicio_exec.strftime('%d/%m/%Y')} → {data_fim_exec.strftime('%d/%m/%Y')}**"
 )
 
+# Se não há dados do ativo no período, não dá pra calcular nem plotar o ativo; mantém benchmark se quiser.
+if df_v.empty:
+    st.error("Não há dados do ativo no período selecionado (Yahoo Finance). Tente ampliar/alterar o intervalo.")
+    st.stop()
+
+# normalização do ativo pelo primeiro ponto disponível dentro do período
+df_v["Total_Fact_Chart"] = df_v["Total_Fact"] / df_v["Total_Fact"].iloc[0]
+df_v["Price_Fact_Chart"] = df_v["Price_Fact"] / df_v["Price_Fact"].iloc[0]
+
+dt_base_chart = df_v.index[0]
+dt_end_chart = df_v.index[-1]
+
+# Aviso se o usuário escolheu início antes do 1º dado do ativo (para não empilhar aportes no mesmo dia)
+primeiro_dado_ativo = df_acao.index.min()
+if dt_ini_user < primeiro_dado_ativo:
+    st.markdown(
+        f"""
+<div class="warn-box">
+⚠️ Você escolheu <b>Início</b> em {dt_ini_user.date().strftime('%d/%m/%Y')}, mas o ativo só tem dados a partir de
+<b>{primeiro_dado_ativo.date().strftime('%d/%m/%Y')}</b>.<br>
+O gráfico ficará “em branco” antes dessa data. Nos cálculos, os aportes passam a contar a partir do <b>primeiro pregão disponível</b>.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+# -------------------------
+# GRÁFICO
+# -------------------------
 fig = go.Figure()
 
+# Benchmarks ancorados na MESMA BASE do ativo (melhor coerência visual)
 if mostrar_rf and (s_rf is not None) and (not s_rf.empty):
-    fig.add_trace(
-        go.Scatter(
-            x=s_rf.index,
-            y=(s_rf / s_rf.iloc[0] - 1) * 100,
-            name=nome_rf,
-            line=dict(color="gray", width=2, dash="dash"),
+    y_rf = serie_pct_desde_base(s_rf, dt_base_chart, dt_end_chart)
+    if not y_rf.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=y_rf.index, y=y_rf,
+                name=nome_rf,
+                line=dict(color="gray", width=2, dash="dash"),
+            )
         )
-    )
 
 if mostrar_ipca and (s_ipca is not None) and (not s_ipca.empty):
-    fig.add_trace(
-        go.Scatter(
-            x=s_ipca.index,
-            y=(s_ipca / s_ipca.iloc[0] - 1) * 100,
-            name="IPCA",
-            line=dict(color="red", width=2),
+    y_ipca = serie_pct_desde_base(s_ipca, dt_base_chart, dt_end_chart)
+    if not y_ipca.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=y_ipca.index, y=y_ipca,
+                name="IPCA",
+                line=dict(color="red", width=2),
+            )
         )
-    )
 
 if mostrar_ibov and (s_ibov is not None) and (not s_ibov.empty):
-    fig.add_trace(
-        go.Scatter(
-            x=s_ibov.index,
-            y=(s_ibov / s_ibov.iloc[0] - 1) * 100,
-            name="Ibovespa",
-            line=dict(color="orange", width=2),
+    y_ibov = serie_pct_desde_base(s_ibov, dt_base_chart, dt_end_chart)
+    if not y_ibov.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=y_ibov.index, y=y_ibov,
+                name="Ibovespa",
+                line=dict(color="orange", width=2),
+            )
         )
-    )
 
+# Área: valorização + proventos (reinvestidos)
 fig.add_trace(
     go.Scatter(
         x=df_v.index,
@@ -566,6 +646,8 @@ fig.add_trace(
         line=dict(width=0),
     )
 )
+
+# Linha do retorno total
 fig.add_trace(
     go.Scatter(
         x=df_v.index,
@@ -583,19 +665,34 @@ fig.update_layout(
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
 )
 
+# Eixo X respeita o período do usuário -> dá “espaço em branco” antes da série do ativo existir
+fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
+
 st.plotly_chart(fig, use_container_width=True)
 
+# -------------------------
+# CARDS (horizontes)
+# -------------------------
 st.subheader("Simulação de Patrimônio Acumulado")
 
 horizontes = [10, 5, 1]
 cols = st.columns(3)
 
+# Início efetivo para cálculo (primeiro pregão a partir do início do usuário)
+dt_ini_eff = proximo_pregao_a_partir(df_acao.index, dt_ini_user)
+if dt_ini_eff is None:
+    st.error("Não foi possível determinar o primeiro pregão disponível para o ativo.")
+    st.stop()
+
 for anos, col in zip(horizontes, cols):
     with col:
-        dt_target = dt_ini + pd.DateOffset(years=anos)
         titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
 
-        if dt_target > dt_fim:
+        # alvo = início efetivo + anos
+        dt_target = dt_ini_eff + pd.DateOffset(years=anos)
+
+        # precisa existir dado até dt_target (data_ref é o último pregão <= dt_target)
+        if dt_target > dt_fim_user:
             st.markdown(
                 f"""
             <div class="total-card">
@@ -605,7 +702,7 @@ for anos, col in zip(horizontes, cols):
             <div class="info-card">
                 <div class="card-header">Período insuficiente</div>
                 <div class="card-item">
-                    Para calcular <b>{anos} anos</b> a partir do início,
+                    Para calcular <b>{anos} anos</b> a partir do início efetivo,
                     selecione uma data final <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
                 </div>
             </div>
@@ -617,7 +714,7 @@ for anos, col in zip(horizontes, cols):
         res = calcular_horizonte(
             df_full=df_acao,
             valor_mensal=float(valor_aporte_exec),
-            dt_inicio_user=dt_ini,
+            dt_inicio_user=dt_ini_user,
             dt_ref_target=dt_target,
             s_rf=s_rf if mostrar_rf else pd.Series(dtype="float64"),
             s_ipca=s_ipca if mostrar_ipca else pd.Series(dtype="float64"),
@@ -667,6 +764,9 @@ for anos, col in zip(horizontes, cols):
         if not bench_lines:
             bench_lines.append('<div class="card-item">—</div>')
 
+        inicio_eff_str = res["dt_inicio_eff"].date().strftime("%d/%m/%Y")
+        data_ref_str = res["data_ref"].date().strftime("%d/%m/%Y")
+
         st.markdown(
             f"""
         <div class="info-card">
@@ -674,6 +774,8 @@ for anos, col in zip(horizontes, cols):
             {''.join(bench_lines)}
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
             <div class="card-header">Análise da Carteira</div>
+            <div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>
+            <div class="card-item">📍 <b>Data de avaliação:</b> {data_ref_str}</div>
             <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
             <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
             <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
@@ -688,13 +790,13 @@ st.markdown(
 <h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
 
 <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy para manter a âncora de renda fixa.</span>
+<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy.</span>
 
 <span class="glossario-termo">• Correção IPCA (Inflação)</span>
 <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Indica quanto você precisaria ter hoje para manter o mesmo patrimônio real do passado.</span>
 
 <span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">Principal índice da bolsa brasileira, composto pelas ações com maior volume de negociação. Usado como benchmark para medir se o ativo superou a média do mercado nacional.</span>
+<span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
 
 <span class="glossario-termo">• Capital Nominal Investido</span>
 <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
@@ -703,10 +805,10 @@ st.markdown(
 <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
 
 <span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. O cálculo utiliza dividendos/JCP e eventos como splits/grupamentos (quando disponíveis), neutralizando distorções de eventos corporativos.</span>
+<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. O cálculo utiliza dividendos/JCP e eventos como splits/grupamentos (quando disponíveis).</span>
 
 <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
-<b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+<b>Nota:</b> O gráfico mostra retorno (%) do índice. Os cards usam aportes mensais (DCA), então resultados podem diferir do “ranking visual” das linhas.
 </p>
 </div>
 """,
