@@ -53,6 +53,11 @@ st.markdown(
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
+    /* ✅ NOVO: hierarquia + lucro em % */
+    .total-sub-muted { font-size: 0.88rem; color: #64748b; margin-top: 4px; }
+    .total-sub-profit { font-size: 0.95rem; font-weight: 800; color: #0f172a; margin-top: 6px; }
+    .small-muted { font-size: 0.78rem; color: #64748b; }
+
     .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
@@ -457,17 +462,71 @@ if btn_analisar:
         st.error("A data de **Início** deve ser anterior à data de **Fim**.")
         st.stop()
 
-    with st.spinner("Sincronizando dados de mercado..."):
-        s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
-        s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
-        df_acao = carregar_dados_completos(ticker_input)
-        s_ibov = carregar_ibov(data_inicio, data_fim)
+    # ✅ Spinner com etapas + erros específicos + fallback (benchmarks são opcionais)
+    load_warnings = []
 
-    if df_acao is None or df_acao.empty:
-        st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
+    # Streamlit novo: st.status. Se não existir, cai no modo simples.
+    use_status = hasattr(st, "status")
+    status = st.status("🔄 Iniciando carregamento...", expanded=False) if use_status else None
+    placeholder = st.empty() if not use_status else None
+
+    try:
+        if status:
+            status.update(label="📌 Carregando ativo (Yahoo Finance)…", state="running")
+        else:
+            placeholder.info("📌 Carregando ativo (Yahoo Finance)…")
+
+        df_acao = carregar_dados_completos(ticker_input)
+        if df_acao is None or df_acao.empty:
+            if status:
+                status.update(label="❌ Falha ao carregar o ativo.", state="error")
+            else:
+                placeholder.empty()
+            st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
+            st.stop()
+
+        if status:
+            status.update(label="🏦 Carregando CDI / IPCA (BCB/SGS)…", state="running")
+        else:
+            placeholder.info("🏦 Carregando CDI / IPCA (BCB/SGS)…")
+
+        s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
+        if s_rf is None or s_rf.empty:
+            load_warnings.append("BCB indisponível: não foi possível carregar CDI/Selic. Exibindo apenas o ativo.")
+
+        s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
+        if s_ipca is None or s_ipca.empty:
+            load_warnings.append("BCB indisponível: não foi possível carregar IPCA. Exibindo apenas o ativo.")
+
+        if status:
+            status.update(label="📈 Carregando Ibovespa (Yahoo)…", state="running")
+        else:
+            placeholder.info("📈 Carregando Ibovespa (Yahoo)…")
+
+        s_ibov = carregar_ibov(data_inicio, data_fim)
+        if s_ibov is None or s_ibov.empty:
+            load_warnings.append("Yahoo indisponível: não foi possível carregar o Ibovespa. Exibindo apenas o ativo.")
+
+        if status:
+            status.update(label="🧮 Montando simulação…", state="running")
+        else:
+            placeholder.info("🧮 Montando simulação…")
+
+    except Exception as e:
+        if status:
+            status.update(label="❌ Erro inesperado no carregamento.", state="error")
+        else:
+            placeholder.empty()
+        st.error(f"Erro ao carregar dados: {e}")
         st.stop()
 
+    if status:
+        status.update(label="✅ Pronto! Dados carregados.", state="complete")
+    else:
+        placeholder.empty()
+
     st.session_state["analysis_ready"] = True
+    st.session_state["load_warnings"] = load_warnings
     st.session_state["params"] = {
         "ticker": ticker_input,
         "aporte": float(valor_aporte),
@@ -475,10 +534,10 @@ if btn_analisar:
         "data_fim": data_fim,
     }
     st.session_state["df_acao"] = df_acao
-    st.session_state["s_rf"] = s_rf
-    st.session_state["nome_rf"] = nome_rf
-    st.session_state["s_ipca"] = s_ipca
-    st.session_state["s_ibov"] = s_ibov
+    st.session_state["s_rf"] = s_rf if s_rf is not None else pd.Series(dtype="float64")
+    st.session_state["nome_rf"] = nome_rf if nome_rf else "Renda Fixa"
+    st.session_state["s_ipca"] = s_ipca if s_ipca is not None else pd.Series(dtype="float64")
+    st.session_state["s_ibov"] = s_ibov if s_ibov is not None else pd.Series(dtype="float64")
 
 if not st.session_state.get("analysis_ready", False):
     st.markdown(
@@ -518,6 +577,10 @@ dt_fim_user = pd.to_datetime(data_fim_exec).normalize()
 st.caption(
     f"Simulação carregada: **{ticker_exec}** | Aporte mensal: **{formata_br(valor_aporte_exec)}** | Período: **{data_inicio_exec.strftime('%d/%m/%Y')} → {data_fim_exec.strftime('%d/%m/%Y')}**"
 )
+
+# ✅ Mostra avisos de carregamento (BCB/Yahoo) se houver
+for msg in st.session_state.get("load_warnings", []):
+    st.warning(msg)
 
 # Recorte do ativo na janela
 df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
@@ -628,6 +691,7 @@ for anos, col in zip(horizontes, cols):
         dt_target = dt_ini_eff + pd.DateOffset(years=anos)
 
         if dt_target > dt_fim_user:
+            dt_target_str = dt_target.date().strftime("%d/%m/%Y")
             st.markdown(
                 f"""
             <div class="total-card">
@@ -637,8 +701,8 @@ for anos, col in zip(horizontes, cols):
             <div class="info-card">
                 <div class="card-header">Período insuficiente</div>
                 <div class="card-item">
-                    Para calcular <b>{anos} anos</b> a partir do início efetivo,
-                    selecione uma data final <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
+                    Para calcular <b>{anos} anos</b>, aumente a data <b>Fim</b> para <b>≥ {dt_target_str}</b>
+                    (ajuste no menu lateral).
                 </div>
             </div>
             """,
@@ -679,11 +743,16 @@ for anos, col in zip(horizontes, cols):
         v_ipca = res["v_ipca"]
         v_ibov = res["v_ibov"]
 
+        pct_lucro = (lucro / vi * 100.0) if vi and vi > 0 else 0.0
+
+        # ✅ Mini-hierarquia: Patrimônio (grande) / Investido (médio) / Lucro (destaque + %)
         st.markdown(
             f"""
         <div class="total-card">
             <div class="total-label">{titulo_col}</div>
             <div class="total-amount">{formata_br(vf)}</div>
+            <div class="total-sub-muted">Investido: {formata_br(vi)}</div>
+            <div class="total-sub-profit">Lucro: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>
         </div>
         """,
             unsafe_allow_html=True,
@@ -710,10 +779,16 @@ for anos, col in zip(horizontes, cols):
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
             <div class="card-header">Análise da Carteira</div>
             <div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>
-            <div class="card-item">📍 <b>Data de avaliação:</b> {data_ref_str}</div>
+
+            <!-- ✅ Termo explicado -->
+            <div class="card-item">
+              📍 <b>Data final usada no cálculo:</b> {data_ref_str}
+              <span class="small-muted">(último pregão disponível até a data-alvo)</span>
+            </div>
+
             <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
             <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
-            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
+            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>
         </div>
         """,
             unsafe_allow_html=True,
