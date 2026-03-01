@@ -18,6 +18,23 @@ st.markdown(
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
 
+    /* ✅ Títulos custom (sem “ícone/link” do Streamlit) */
+    .page-title{
+        font-size: 2.25rem;
+        font-weight: 900;
+        color: #0f172a;
+        margin: 0 0 0.25rem 0;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+    }
+    .section-title{
+        font-size: 1.55rem;
+        font-weight: 900;
+        color: #0f172a;
+        margin: 22px 0 10px 0;
+        letter-spacing: -0.01em;
+    }
+
     .resumo-objetivo {
         font-size: 0.95rem;
         color: #333;
@@ -60,6 +77,15 @@ st.markdown(
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
 
+    /* ✅ Guia maior (mais “título”), mas menor que o título principal */
+    .glossario-title {
+        font-size: 1.35rem;
+        font-weight: 900;
+        color: #1f77b4;
+        margin: 0 0 12px 0;
+        letter-spacing: -0.01em;
+    }
+
     .warn-box {
         background: #fff7ed;
         border: 1px solid #fed7aa;
@@ -79,7 +105,8 @@ st.markdown(
 def formata_br(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-st.title("Simulador de Acúmulo de Patrimônio")
+# ✅ Título sem “hyperlink/âncora”
+st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
 # =========================================================
 # 2) FUNÇÕES DE SUPORTE E PROJEÇÃO
@@ -609,9 +636,9 @@ fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
 st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------
-# CARDS
+# ✅ “Simulação de Patrimônio Acumulado” sem hyperlink/âncora
 # -------------------------
-st.subheader("Simulação de Patrimônio Acumulado")
+st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
 
 horizontes = [10, 5, 1]
 cols = st.columns(3)
@@ -678,8 +705,8 @@ for anos, col in zip(horizontes, cols):
         v_ibov = res["v_ibov"]
 
         rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0
-        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"  # ✅ verde escuro / vermelho
-        emoji_rendimento = "📊"  # ✅ mais profissional
+        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"  # verde escuro / vermelho
+        emoji_rendimento = "📈"  # mais profissional
 
         bench_lines = []
         if mostrar_rf and v_rf is not None:
@@ -702,7 +729,7 @@ for anos, col in zip(horizontes, cols):
         </div>
         <div class="info-card">
             <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
-            <div class="card-item" style="font-size: 1.02rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">
+            <div class="card-item" style="font-size: 1.00rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">
                 {emoji_rendimento} <b>Rendimento Nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)
             </div>
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
@@ -718,11 +745,9 @@ for anos, col in zip(horizontes, cols):
             unsafe_allow_html=True,
         )
 
-# =========================================================
-# ✅ GUIA (sem hyperlink ao lado do título)
-#   Motivo: o <h3> pode renderizar âncora dependendo do tema/markdown.
-#   Solução: usar div com classe (glossario-title).
-# =========================================================
+# -------------------------
+# ✅ GUIA (título maior e sem hyperlink/âncora)
+# -------------------------
 st.markdown(
     """
 <div class="glossario-container">
