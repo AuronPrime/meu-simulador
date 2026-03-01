@@ -55,7 +55,7 @@ st.markdown(
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 18px; border-radius: 0 0 12px 12px; margin-bottom: 15px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
-    
+
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
@@ -174,17 +174,15 @@ def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
         dt_fim_ts = dt_fim_ts.tz_localize(s.index.tz)
 
     ultima_data = s.index[-1]
-    
-    # Se o dado já cobre ou ultrapassa a data final, retorna a série original
+
     if ultima_data >= dt_fim_ts:
         return s
 
-    # Busca o valor de 12 meses atrás para calcular a média histórica recente
     dt_12m_atras = ultima_data - pd.DateOffset(months=12)
     s_historico = s.loc[:ultima_data]
 
     try:
-        idx_12m = s_historico.index.get_indexer([dt_12m_atras], method='nearest')[0]
+        idx_12m = s_historico.index.get_indexer([dt_12m_atras], method="nearest")[0]
         val_passado = s_historico.iloc[idx_12m]
         data_passado = s_historico.index[idx_12m]
     except Exception:
@@ -195,10 +193,9 @@ def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
     if dias_decorridos <= 0:
         return s
 
-    # Taxa geométrica diária
     taxa_diaria = (float(s.iloc[-1]) / float(val_passado)) ** (1 / dias_decorridos) - 1
 
-    datas_faltantes = pd.date_range(start=ultima_data + pd.Timedelta(days=1), end=dt_fim_ts, freq='D')
+    datas_faltantes = pd.date_range(start=ultima_data + pd.Timedelta(days=1), end=dt_fim_ts, freq="D")
     projetados = []
     val_atual = float(s.iloc[-1])
 
@@ -460,7 +457,6 @@ if btn_analisar:
 
         st.write("🏦 Consultando Renda Fixa (CDI/Selic)...")
         s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
-        # Projeta os dados faltantes caso o último dado do BCB seja anterior à data_fim
         s_rf = projetar_indice_ate_fim(s_rf, data_fim)
 
         st.write("🛒 Consultando inflação (IPCA)...")
@@ -680,9 +676,10 @@ for anos, col in zip(horizontes, cols):
         v_rf = res["v_rf"]
         v_ipca = res["v_ipca"]
         v_ibov = res["v_ibov"]
-        
-        lucro_pct = (lucro / vi) * 100 if vi > 0 else 0
-        cor_lucro = "#16a34a" if lucro >= 0 else "#dc2626"
+
+        rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0
+        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"  # ✅ verde escuro / vermelho
+        emoji_rendimento = "📊"  # ✅ mais profissional
 
         bench_lines = []
         if mostrar_rf and v_rf is not None:
@@ -704,47 +701,54 @@ for anos, col in zip(horizontes, cols):
             <div class="total-amount">{formata_br(vf)}</div>
         </div>
         <div class="info-card">
-            <div class="card-item" style="font-size: 1.05rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
-            <div class="card-item" style="font-size: 1.15rem; color: {cor_lucro}; font-weight: 800; margin-bottom: 12px;">💰 Lucro: {formata_br(lucro)} ({lucro_pct:.2f}%)</div>
+            <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
+            <div class="card-item" style="font-size: 1.02rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">
+                {emoji_rendimento} <b>Rendimento Nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)
+            </div>
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
             <div class="card-header">Benchmarks (Valor Corrigido)</div>
             {''.join(bench_lines)}
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
             <div class="card-header">Detalhes</div>
             <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>
-            <div class="card-item">📍 <b>Avaliação:</b> {data_ref_str}</div>
+            <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str}</div>
             <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
+# =========================================================
+# ✅ GUIA (sem hyperlink ao lado do título)
+#   Motivo: o <h3> pode renderizar âncora dependendo do tema/markdown.
+#   Solução: usar div com classe (glossario-title).
+# =========================================================
 st.markdown(
     """
 <div class="glossario-container">
-<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
+  <div class="glossario-title">Guia de Termos e Indicadores</div>
 
-<span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores do mês atual ou faltantes são projetados com base na média dos últimos 12 meses.</span>
+  <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
+  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores do mês atual ou faltantes são projetados com base na média dos últimos 12 meses.</span>
 
-<span class="glossario-termo">• Correção IPCA (Inflação)</span>
-<span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes de publicação pelo IBGE são estimadas usando a inflação média histórica do último ano.</span>
+  <span class="glossario-termo">• Correção IPCA (Inflação)</span>
+  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes de publicação pelo IBGE são estimadas usando a inflação média histórica do último ano.</span>
 
-<span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
+  <span class="glossario-termo">• Ibovespa</span>
+  <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
 
-<span class="glossario-termo">• Capital Nominal Investido</span>
-<span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
+  <span class="glossario-termo">• Capital Nominal Investido</span>
+  <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
 
-<span class="glossario-termo">• Lucro Acumulado</span>
-<span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
+  <span class="glossario-termo">• Lucro Acumulado</span>
+  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
 
-<span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+  <span class="glossario-termo">• Retorno Total</span>
+  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
 
-<p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
-<b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
-</p>
+  <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
+    <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+  </p>
 </div>
 """,
     unsafe_allow_html=True,
