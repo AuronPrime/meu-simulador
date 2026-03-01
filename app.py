@@ -16,68 +16,63 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 st.markdown(
     """
 <style>
-[data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
+    [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
 
-.resumo-objetivo {
-    font-size: 0.95rem;
-    color: #333;
-    background-color: #e8f0fe;
-    padding: 18px;
-    border-radius: 10px;
-    margin-bottom: 15px;
-    border-left: 5px solid #1f77b4;
-    line-height: 1.6;
-}
+    .resumo-objetivo {
+        font-size: 0.95rem;
+        color: #333;
+        background-color: #e8f0fe;
+        padding: 18px;
+        border-radius: 10px;
+        margin-bottom: 15px;
+        border-left: 5px solid #1f77b4;
+        line-height: 1.6;
+    }
 
-.instrucoes {
-    font-size: 0.9rem;
-    color: #0f172a;
-    background-color: #f8fafc;
-    padding: 15px;
-    border-radius: 10px;
-    margin-bottom: 12px;
-    border: 1px solid #e2e8f0;
-    line-height: 1.55;
-}
-.instrucoes b { color: #1f77b4; }
-.instrucoes .obs { color: #475569; font-size: 0.85rem; margin-top: 8px; }
+    .instrucoes {
+        font-size: 0.9rem;
+        color: #0f172a;
+        background-color: #f8fafc;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 12px;
+        border: 1px solid #e2e8f0;
+        line-height: 1.55;
+    }
+    .instrucoes b { color: #1f77b4; }
+    .instrucoes .obs { color: #475569; font-size: 0.85rem; margin-top: 8px; }
 
-.total-card {
-    background-color: #f8fafc;
-    border: 1px solid #e2e8f0;
-    padding: 15px;
-    border-radius: 12px;
-    margin-bottom: 10px;
-    text-align: center;
-}
-.total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
-.total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
+    .total-card {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        padding: 15px;
+        border-radius: 12px;
+        margin-bottom: 10px;
+        text-align: center;
+    }
+    .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
+    .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
-/* ✅ Hierarquia */
-.total-sub-muted { font-size: 0.88rem; color: #64748b; margin-top: 4px; }
-.total-sub-profit { font-size: 0.95rem; font-weight: 800; color: #0f172a; margin-top: 6px; }
-.small-muted { font-size: 0.78rem; color: #64748b; }
+    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
+    .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
+    .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
+    .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 
-.info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
-.card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
-.card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
-.card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+    .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
+    .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
+    .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
 
-.glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
-.glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
-.glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
-
-.warn-box {
-    background: #fff7ed;
-    border: 1px solid #fed7aa;
-    border-left: 5px solid #fb923c;
-    padding: 12px 14px;
-    border-radius: 10px;
-    color: #7c2d12;
-    margin: 10px 0 0 0;
-    font-size: 0.9rem;
-    line-height: 1.5;
-}
+    .warn-box {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-left: 5px solid #fb923c;
+        padding: 12px 14px;
+        border-radius: 10px;
+        color: #7c2d12;
+        margin: 10px 0 0 0;
+        font-size: 0.9rem;
+        line-height: 1.5;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -417,6 +412,8 @@ st.sidebar.markdown(
 )
 
 # Defaults:
+# - Fim = hoje - 1 dia
+# - Início = fim - 10 anos - 1 dia
 hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
@@ -427,6 +424,7 @@ with st.sidebar.form("form_simulador"):
 
     st.subheader("Período da Simulação")
     data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
+    # ✅ Fim não pode passar hoje
     data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
 
     btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
@@ -459,69 +457,17 @@ if btn_analisar:
         st.error("A data de **Início** deve ser anterior à data de **Fim**.")
         st.stop()
 
-    # ✅ Spinner com etapas (sem ícones) + fallback (benchmarks opcionais)
-    load_warnings = []
-    use_status = hasattr(st, "status")
-    status = st.status("Iniciando carregamento...", expanded=False) if use_status else None
-    placeholder = st.empty() if not use_status else None
-
-    try:
-        if status:
-            status.update(label="Carregando ativo (Yahoo Finance)...", state="running")
-        else:
-            placeholder.info("Carregando ativo (Yahoo Finance)...")
-
-        df_acao = carregar_dados_completos(ticker_input)
-        if df_acao is None or df_acao.empty:
-            if status:
-                status.update(label="Falha ao carregar o ativo.", state="error")
-            else:
-                placeholder.empty()
-            st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
-            st.stop()
-
-        if status:
-            status.update(label="Carregando CDI / IPCA (BCB/SGS)...", state="running")
-        else:
-            placeholder.info("Carregando CDI / IPCA (BCB/SGS)...")
-
+    with st.spinner("Sincronizando dados de mercado..."):
         s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
-        if s_rf is None or s_rf.empty:
-            load_warnings.append("BCB indisponível: não foi possível carregar CDI/Selic. Exibindo apenas o ativo.")
-
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
-        if s_ipca is None or s_ipca.empty:
-            load_warnings.append("BCB indisponível: não foi possível carregar IPCA. Exibindo apenas o ativo.")
-
-        if status:
-            status.update(label="Carregando Ibovespa (Yahoo)...", state="running")
-        else:
-            placeholder.info("Carregando Ibovespa (Yahoo)...")
-
+        df_acao = carregar_dados_completos(ticker_input)
         s_ibov = carregar_ibov(data_inicio, data_fim)
-        if s_ibov is None or s_ibov.empty:
-            load_warnings.append("Yahoo indisponível: não foi possível carregar o Ibovespa. Exibindo apenas o ativo.")
 
-        if status:
-            status.update(label="Montando simulação...", state="running")
-        else:
-            placeholder.info("Montando simulação...")
-
-    except Exception as e:
-        if status:
-            status.update(label="Erro inesperado no carregamento.", state="error")
-        else:
-            placeholder.empty()
-        st.error(f"Erro ao carregar dados: {e}")
+    if df_acao is None or df_acao.empty:
+        st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
         st.stop()
 
-    if status:
-        status.update(label="Pronto! Dados carregados.", state="complete")
-    else:
-        placeholder.empty()
-
     st.session_state["analysis_ready"] = True
-    st.session_state["load_warnings"] = load_warnings
     st.session_state["params"] = {
         "ticker": ticker_input,
         "aporte": float(valor_aporte),
@@ -529,10 +475,10 @@ if btn_analisar:
         "data_fim": data_fim,
     }
     st.session_state["df_acao"] = df_acao
-    st.session_state["s_rf"] = s_rf if s_rf is not None else pd.Series(dtype="float64")
-    st.session_state["nome_rf"] = nome_rf if nome_rf else "Renda Fixa"
-    st.session_state["s_ipca"] = s_ipca if s_ipca is not None else pd.Series(dtype="float64")
-    st.session_state["s_ibov"] = s_ibov if s_ibov is not None else pd.Series(dtype="float64")
+    st.session_state["s_rf"] = s_rf
+    st.session_state["nome_rf"] = nome_rf
+    st.session_state["s_ipca"] = s_ipca
+    st.session_state["s_ibov"] = s_ibov
 
 if not st.session_state.get("analysis_ready", False):
     st.markdown(
@@ -572,9 +518,6 @@ dt_fim_user = pd.to_datetime(data_fim_exec).normalize()
 st.caption(
     f"Simulação carregada: **{ticker_exec}** | Aporte mensal: **{formata_br(valor_aporte_exec)}** | Período: **{data_inicio_exec.strftime('%d/%m/%Y')} → {data_fim_exec.strftime('%d/%m/%Y')}**"
 )
-
-for msg in st.session_state.get("load_warnings", []):
-    st.warning(msg)
 
 # Recorte do ativo na janela
 df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
@@ -660,6 +603,8 @@ fig.update_layout(
     margin=dict(l=10, r=10, t=40, b=10),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
 )
+
+# Eixo X respeita o período do usuário (permite “branco” antes do ativo ter dados)
 fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
 
 st.plotly_chart(fig, use_container_width=True)
@@ -683,18 +628,22 @@ for anos, col in zip(horizontes, cols):
         dt_target = dt_ini_eff + pd.DateOffset(years=anos)
 
         if dt_target > dt_fim_user:
-            dt_target_str = dt_target.date().strftime("%d/%m/%Y")
-            html_insuf = (
-                f'<div class="total-card">'
-                f'<div class="total-label">{titulo_col}</div>'
-                f'<div class="total-amount">—</div>'
-                f'</div>'
-                f'<div class="info-card">'
-                f'<div class="card-header">Período insuficiente</div>'
-                f'<div class="card-item">Para calcular <b>{anos} anos</b>, aumente a data <b>Fim</b> para <b>≥ {dt_target_str}</b> (ajuste no menu lateral).</div>'
-                f'</div>'
+            st.markdown(
+                f"""
+            <div class="total-card">
+                <div class="total-label">{titulo_col}</div>
+                <div class="total-amount">—</div>
+            </div>
+            <div class="info-card">
+                <div class="card-header">Período insuficiente</div>
+                <div class="card-item">
+                    Para calcular <b>{anos} anos</b> a partir do início efetivo,
+                    selecione uma data final <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
             )
-            st.markdown(html_insuf, unsafe_allow_html=True)
             continue
 
         res = calcular_horizonte(
@@ -708,17 +657,19 @@ for anos, col in zip(horizontes, cols):
         )
 
         if res is None:
-            html_none = (
-                f'<div class="total-card">'
-                f'<div class="total-label">{titulo_col}</div>'
-                f'<div class="total-amount">—</div>'
-                f'</div>'
-                f'<div class="info-card">'
-                f'<div class="card-header">Aviso</div>'
-                f'<div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>'
-                f'</div>'
+            st.markdown(
+                f"""
+            <div class="total-card">
+                <div class="total-label">{titulo_col}</div>
+                <div class="total-amount">—</div>
+            </div>
+            <div class="info-card">
+                <div class="card-header">Aviso</div>
+                <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
             )
-            st.markdown(html_none, unsafe_allow_html=True)
             continue
 
         vf = res["vf"]
@@ -727,17 +678,16 @@ for anos, col in zip(horizontes, cols):
         v_rf = res["v_rf"]
         v_ipca = res["v_ipca"]
         v_ibov = res["v_ibov"]
-        pct_lucro = (lucro / vi * 100.0) if vi and vi > 0 else 0.0
 
-        html_total = (
-            f'<div class="total-card">'
-            f'<div class="total-label">{titulo_col}</div>'
-            f'<div class="total-amount">{formata_br(vf)}</div>'
-            f'<div class="total-sub-muted">Investido: {formata_br(vi)}</div>'
-            f'<div class="total-sub-profit">Lucro: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>'
-            f'</div>'
+        st.markdown(
+            f"""
+        <div class="total-card">
+            <div class="total-label">{titulo_col}</div>
+            <div class="total-amount">{formata_br(vf)}</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
-        st.markdown(html_total, unsafe_allow_html=True)
 
         bench_lines = []
         if mostrar_rf and v_rf is not None:
@@ -751,22 +701,23 @@ for anos, col in zip(horizontes, cols):
 
         inicio_eff_str = res["dt_inicio_eff"].date().strftime("%d/%m/%Y")
         data_ref_str = res["data_ref"].date().strftime("%d/%m/%Y")
-        bench_html = "".join(bench_lines)
 
-        html_info = (
-            f'<div class="info-card">'
-            f'<div class="card-header">Benchmarks (Valor Corrigido)</div>'
-            f'{bench_html}'
-            f'<hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">'
-            f'<div class="card-header">Análise da Carteira</div>'
-            f'<div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>'
-            f'<div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str} <span class="small-muted">(último pregão disponível até a data-alvo)</span></div>'
-            f'<div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>'
-            f'<div class="card-item">🗓️ <b>Nº de aportes:</b> {res["n_aportes"]}</div>'
-            f'<div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>'
-            f'</div>'
+        st.markdown(
+            f"""
+        <div class="info-card">
+            <div class="card-header">Benchmarks (Valor Corrigido)</div>
+            {''.join(bench_lines)}
+            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+            <div class="card-header">Análise da Carteira</div>
+            <div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>
+            <div class="card-item">📍 <b>Data de avaliação:</b> {data_ref_str}</div>
+            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
+            <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
+            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
-        st.markdown(html_info, unsafe_allow_html=True)
 
 st.markdown(
     """
