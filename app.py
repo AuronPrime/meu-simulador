@@ -53,11 +53,6 @@ st.markdown(
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
-    /* ✅ Hierarquia (cards) */
-    .total-sub-muted { font-size: 0.88rem; color: #64748b; margin-top: 4px; }
-    .total-sub-profit { font-size: 0.95rem; font-weight: 800; color: #0f172a; margin-top: 6px; }
-    .small-muted { font-size: 0.78rem; color: #64748b; }
-
     .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
@@ -77,29 +72,6 @@ st.markdown(
         margin: 10px 0 0 0;
         font-size: 0.9rem;
         line-height: 1.5;
-    }
-
-    /* ✅ Status do ticker (menor e discreto) */
-    .ticker-status {
-        font-size: 0.78rem;
-        padding: 6px 8px;
-        border-radius: 8px;
-        margin-top: 6px;
-        border: 1px solid;
-        line-height: 1.25;
-        opacity: 0.95;
-    }
-    .ticker-ok { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
-    .ticker-bad { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
-    .ticker-neutral { background: #f8fafc; color: #475569; border-color: #e2e8f0; }
-
-    /* ✅ Título do glossário sem "ícone/link" */
-    .glossario-title {
-        font-size: 1.45rem;
-        font-weight: 800;
-        color: #1f77b4;
-        margin: 0 0 10px 0;
-        padding: 0;
     }
 </style>
 """,
@@ -421,77 +393,7 @@ def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timesta
     return (s_plot / float(base) - 1.0) * 100.0
 
 # =========================================================
-# ✅ TICKER STATUS (certo/errado) – importado do outro código
-# =========================================================
-
-def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
-    t = (t or "").upper().strip()
-    if not t:
-        return "", ""
-    base = t[:-3] if t.endswith(".SA") else t
-    return base, base + ".SA"
-
-TICKER_APELIDOS: dict[str, str] = {
-    "BBAS3": "Banco do Brasil",
-    "ITUB3": "Banco Itaú",
-    "ITUB4": "Banco Itaú",
-    "BBDC3": "Banco Bradesco",
-    "BBDC4": "Banco Bradesco",
-    "SANB3": "Banco Santander",
-    "SANB4": "Banco Santander",
-    "PETR3": "Petrobras",
-    "PETR4": "Petrobras",
-    "VALE3": "Vale",
-}
-
-def _limpa_nome_yahoo(nome_raw: str) -> str:
-    if not nome_raw:
-        return ""
-    n = " ".join(str(nome_raw).strip().split())
-    remove_tokens = {"ON", "PN", "PNA", "PNB", "PNC", "UNT", "UNIT", "NM", "N1", "N2", "MA", "MB"}
-    parts = [p for p in n.replace("/", " ").split() if p.upper() not in remove_tokens]
-    n2 = " ".join(parts).strip()
-    for suf in [" S.A.", " SA"]:
-        n2 = n2.replace(suf, " ").strip()
-    n2 = " ".join(n2.split())
-
-    title = n2.lower().title()
-    for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
-        title = title.replace(w, w.lower())
-    return title.strip()
-
-def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
-    base = (base or "").upper().strip()
-    if base in TICKER_APELIDOS:
-        return TICKER_APELIDOS[base]
-    cleaned = _limpa_nome_yahoo(nome_yahoo)
-    return cleaned if cleaned else base
-
-@st.cache_data(ttl=60 * 10, show_spinner=False)
-def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
-    """
-    Retorna (ok, nome_raw). Cache curto para não consultar toda hora.
-    """
-    if not base:
-        return False, ""
-    _, t_sa = normaliza_ticker_usuario(base)
-    try:
-        tk = yf.Ticker(t_sa)
-        h = tk.history(period="5d", auto_adjust=False)
-        if h is None or h.empty:
-            return False, ""
-        nome = ""
-        try:
-            info = tk.info or {}
-            nome = info.get("shortName") or info.get("longName") or ""
-        except Exception:
-            nome = ""
-        return True, nome
-    except Exception:
-        return False, ""
-
-# =========================================================
-# 3) BARRA LATERAL (inputs + status do ticker)
+# 3) BARRA LATERAL (FORM + INSTRUÇÕES)
 # =========================================================
 
 st.sidebar.markdown(
@@ -509,47 +411,23 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+# Defaults:
+# - Fim = hoje - 1 dia
+# - Início = fim - 10 anos - 1 dia
 hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-ticker_input = st.sidebar.text_input("Digite o Ticker", "", key="ticker_input").upper().strip()
+with st.sidebar.form("form_simulador"):
+    ticker_input = st.text_input("Digite o Ticker", "").upper().strip()
+    valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-# ✅ Caixa pequena informando se encontrou ou não
-ticker_box = st.sidebar.empty()
-if ticker_input:
-    base, _ = normaliza_ticker_usuario(ticker_input)
-    if len(base) >= 4:
-        ok, nome_raw = validar_ticker_yahoo(base)
-        if ok:
-            nome_show = nome_comercial_para_ticker(base, nome_raw)
-            ticker_box.markdown(
-                f'<div class="ticker-status ticker-ok">Encontrado: <b>{nome_show}</b> ({base})</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            ticker_box.markdown(
-                '<div class="ticker-status ticker-bad">Ticker não encontrado. Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b>…</div>',
-                unsafe_allow_html=True,
-            )
-    else:
-        ticker_box.markdown(
-            '<div class="ticker-status ticker-neutral">Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
-            unsafe_allow_html=True,
-        )
-else:
-    ticker_box.markdown(
-        '<div class="ticker-status ticker-neutral">Exemplos: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
-        unsafe_allow_html=True,
-    )
+    st.subheader("Período da Simulação")
+    data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
+    # ✅ Fim não pode passar hoje
+    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
 
-valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
-
-st.sidebar.subheader("Período da Simulação")
-data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
-data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
-
-btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
+    btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
 
 st.sidebar.subheader("Benchmarks")
 mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI/Selic)", value=True, key="mostrar_rf")
@@ -725,12 +603,14 @@ fig.update_layout(
     margin=dict(l=10, r=10, t=40, b=10),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
 )
+
+# Eixo X respeita o período do usuário (permite “branco” antes do ativo ter dados)
 fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
 
 st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------
-# ✅ CARDS (10, 5 e 1 ano) – importado do outro código
+# CARDS
 # -------------------------
 st.subheader("Simulação de Patrimônio Acumulado")
 
@@ -748,18 +628,22 @@ for anos, col in zip(horizontes, cols):
         dt_target = dt_ini_eff + pd.DateOffset(years=anos)
 
         if dt_target > dt_fim_user:
-            dt_target_str = dt_target.date().strftime("%d/%m/%Y")
-            html_insuf = (
-                f'<div class="total-card">'
-                f'  <div class="total-label">{titulo_col}</div>'
-                f'  <div class="total-amount">—</div>'
-                f'</div>'
-                f'<div class="info-card">'
-                f'  <div class="card-header">Período insuficiente</div>'
-                f'  <div class="card-item">Para calcular <b>{anos} anos</b>, aumente a data <b>Fim</b> para <b>≥ {dt_target_str}</b> (ajuste no menu lateral).</div>'
-                f'</div>'
+            st.markdown(
+                f"""
+            <div class="total-card">
+                <div class="total-label">{titulo_col}</div>
+                <div class="total-amount">—</div>
+            </div>
+            <div class="info-card">
+                <div class="card-header">Período insuficiente</div>
+                <div class="card-item">
+                    Para calcular <b>{anos} anos</b> a partir do início efetivo,
+                    selecione uma data final <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
             )
-            st.markdown(html_insuf, unsafe_allow_html=True)
             continue
 
         res = calcular_horizonte(
@@ -773,36 +657,37 @@ for anos, col in zip(horizontes, cols):
         )
 
         if res is None:
-            html_none = (
-                f'<div class="total-card">'
-                f'  <div class="total-label">{titulo_col}</div>'
-                f'  <div class="total-amount">—</div>'
-                f'</div>'
-                f'<div class="info-card">'
-                f'  <div class="card-header">Aviso</div>'
-                f'  <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>'
-                f'</div>'
+            st.markdown(
+                f"""
+            <div class="total-card">
+                <div class="total-label">{titulo_col}</div>
+                <div class="total-amount">—</div>
+            </div>
+            <div class="info-card">
+                <div class="card-header">Aviso</div>
+                <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
             )
-            st.markdown(html_none, unsafe_allow_html=True)
             continue
 
-        vf = float(res["vf"])
-        vi = float(res["vi"])
-        lucro = float(res["lucro"])
+        vf = res["vf"]
+        vi = res["vi"]
+        lucro = res["lucro"]
         v_rf = res["v_rf"]
         v_ipca = res["v_ipca"]
         v_ibov = res["v_ibov"]
-        pct_lucro = (lucro / vi * 100.0) if vi > 0 else 0.0
 
-        html_total = (
-            f'<div class="total-card">'
-            f'  <div class="total-label">{titulo_col}</div>'
-            f'  <div class="total-amount">{formata_br(vf)}</div>'
-            f'  <div class="total-sub-muted">Investido: {formata_br(vi)}</div>'
-            f'  <div class="total-sub-profit">Lucro: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>'
-            f'</div>'
+        st.markdown(
+            f"""
+        <div class="total-card">
+            <div class="total-label">{titulo_col}</div>
+            <div class="total-amount">{formata_br(vf)}</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
-        st.markdown(html_total, unsafe_allow_html=True)
 
         bench_lines = []
         if mostrar_rf and v_rf is not None:
@@ -817,50 +702,49 @@ for anos, col in zip(horizontes, cols):
         inicio_eff_str = res["dt_inicio_eff"].date().strftime("%d/%m/%Y")
         data_ref_str = res["data_ref"].date().strftime("%d/%m/%Y")
 
-        html_info = (
-            f'<div class="info-card">'
-            f'  <div class="card-header">Benchmarks (Valor Corrigido)</div>'
-            f'  {"".join(bench_lines)}'
-            f'  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">'
-            f'  <div class="card-header">Análise da Carteira</div>'
-            f'  <div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>'
-            f'  <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str} <span class="small-muted">(último pregão disponível até a data-alvo)</span></div>'
-            f'  <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>'
-            f'  <div class="card-item">🗓️ <b>Nº de aportes:</b> {res["n_aportes"]}</div>'
-            f'  <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>'
-            f'</div>'
+        st.markdown(
+            f"""
+        <div class="info-card">
+            <div class="card-header">Benchmarks (Valor Corrigido)</div>
+            {''.join(bench_lines)}
+            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+            <div class="card-header">Análise da Carteira</div>
+            <div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>
+            <div class="card-item">📍 <b>Data de avaliação:</b> {data_ref_str}</div>
+            <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>
+            <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
+            <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)}</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
-        st.markdown(html_info, unsafe_allow_html=True)
 
-# -------------------------
-# ✅ GLOSSÁRIO (sem hyperlink no título)
-# -------------------------
 st.markdown(
     """
 <div class="glossario-container">
-  <div class="glossario-title">Guia de Termos e Indicadores</div>
+<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
 
-  <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy.</span>
+<span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
+<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy.</span>
 
-  <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual.</span>
+<span class="glossario-termo">• Correção IPCA (Inflação)</span>
+<span class="glossario-def">Atualiza o valor investido para o poder de compra atual.</span>
 
-  <span class="glossario-termo">• Ibovespa</span>
-  <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
+<span class="glossario-termo">• Ibovespa</span>
+<span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
 
-  <span class="glossario-termo">• Capital Nominal Investido</span>
-  <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
+<span class="glossario-termo">• Capital Nominal Investido</span>
+<span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
 
-  <span class="glossario-termo">• Lucro Acumulado</span>
-  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
+<span class="glossario-termo">• Lucro Acumulado</span>
+<span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
 
-  <span class="glossario-termo">• Retorno Total</span>
-  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+<span class="glossario-termo">• Retorno Total</span>
+<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
 
-  <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
-    <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
-  </p>
+<p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
+<b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+</p>
 </div>
 """,
     unsafe_allow_html=True,
