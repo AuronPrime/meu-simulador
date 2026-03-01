@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -12,6 +13,95 @@ import calendar
 # 1) CONFIGURAÇÃO DA PÁGINA
 # =========================================================
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
+
+# ✅ Tooltip “flutuante” via JS (fica acima de tudo e não é cortado pela sidebar)
+components.html(
+    """
+<script>
+(function () {
+  if (window.__rbTooltipInstalled) return;
+  window.__rbTooltipInstalled = true;
+
+  const tooltip = document.createElement('div');
+  tooltip.id = 'rb-tooltip-float';
+  tooltip.style.position = 'fixed';
+  tooltip.style.zIndex = '999999';
+  tooltip.style.padding = '8px 10px';
+  tooltip.style.background = '#0f172a';
+  tooltip.style.color = '#ffffff';
+  tooltip.style.borderRadius = '10px';
+  tooltip.style.fontSize = '12px';
+  tooltip.style.lineHeight = '1.3';
+  tooltip.style.boxShadow = '0 8px 24px rgba(0,0,0,0.18)';
+  tooltip.style.maxWidth = '280px';
+  tooltip.style.pointerEvents = 'none';
+  tooltip.style.opacity = '0';
+  tooltip.style.transition = 'opacity 0.05s linear';
+  tooltip.style.whiteSpace = 'normal';
+
+  document.body.appendChild(tooltip);
+
+  function show(el) {
+    const text = el.getAttribute('data-tooltip') || '';
+    if (!text) return;
+    tooltip.textContent = text;
+    tooltip.style.opacity = '1';
+    position(el);
+  }
+
+  function hide() {
+    tooltip.style.opacity = '0';
+  }
+
+  function position(el) {
+    const rect = el.getBoundingClientRect();
+    const pad = 10;
+
+    // posição padrão: à direita do ícone
+    let x = rect.right + pad;
+    let y = rect.top - 6;
+
+    // mede depois do conteúdo setado
+    const tw = tooltip.offsetWidth || 260;
+    const th = tooltip.offsetHeight || 60;
+
+    // se estourar à direita, joga para esquerda
+    if (x + tw + 8 > window.innerWidth) {
+      x = rect.left - tw - pad;
+    }
+
+    // limita bordas
+    if (x < 8) x = 8;
+
+    // se estourar embaixo, ajusta
+    if (y + th + 8 > window.innerHeight) {
+      y = window.innerHeight - th - 8;
+    }
+    if (y < 8) y = 8;
+
+    tooltip.style.left = x + 'px';
+    tooltip.style.top = y + 'px';
+  }
+
+  function attach() {
+    document.querySelectorAll('.rb-tooltip-icon').forEach((el) => {
+      if (el.__rbTooltipBound) return;
+      el.__rbTooltipBound = true;
+
+      el.addEventListener('mouseenter', () => show(el));
+      el.addEventListener('mousemove', () => position(el));
+      el.addEventListener('mouseleave', () => hide());
+    });
+  }
+
+  attach();
+  const obs = new MutationObserver(() => attach());
+  obs.observe(document.body, { childList: true, subtree: true });
+})();
+</script>
+""",
+    height=0,
+)
 
 st.markdown(
     """
@@ -103,28 +193,17 @@ st.markdown(
         font-size: 0.74rem;
         padding: 5px 8px;
         border-radius: 8px;
-        margin-top: -10px;     /* ✅ cola no campo */
-        margin-bottom: 8px;    /* respiro antes do próximo campo */
+        margin-top: -10px;     /* cola no campo */
+        margin-bottom: 8px;
         border: 1px solid;
         line-height: 1.25;
         color: #0f172a;        /* letra preta */
     }
-    .ticker-ok {
-        background: #dcfce7;   /* verde claro */
-        border-color: #86efac;
-    }
-    .ticker-bad {
-        background: #fee2e2;   /* vermelho claro */
-        border-color: #fca5a5;
-    }
-    .ticker-neutral {
-        background: #f8fafc;
-        border-color: #e2e8f0;
-        color: #475569;
-        margin-top: -10px;
-    }
+    .ticker-ok { background: #dcfce7; border-color: #86efac; }
+    .ticker-bad { background: #fee2e2; border-color: #fca5a5; }
+    .ticker-neutral { background: #f8fafc; border-color: #e2e8f0; color: #475569; margin-top: -10px; }
 
-    /* ✅ Label do ticker + tooltip instantâneo */
+    /* ✅ Label do ticker + ícone tooltip */
     .ticker-label-row{
         display:flex;
         align-items:center;
@@ -138,7 +217,7 @@ st.markdown(
         margin: 0;
         padding: 0;
     }
-    .ticker-help{
+    .rb-tooltip-icon{
         display:inline-flex;
         align-items:center;
         justify-content:center;
@@ -152,35 +231,6 @@ st.markdown(
         font-weight: 800;
         cursor: help;
         user-select:none;
-    }
-    .tooltip-wrap{
-        position: relative;
-        display: inline-flex;
-        align-items: center;
-    }
-    .tooltip-text{
-        position: absolute;
-        left: 24px;
-        top: -6px;
-        min-width: 240px;
-        max-width: 280px;
-        background: #0f172a;
-        color: #ffffff;
-        border-radius: 10px;
-        padding: 8px 10px;
-        font-size: 0.75rem;
-        line-height: 1.25;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
-        opacity: 0;
-        visibility: hidden;
-        transform: translateY(0px);
-        transition: opacity 0.05s linear;  /* ✅ praticamente instantâneo */
-        z-index: 9999;
-        pointer-events: none;
-    }
-    .tooltip-wrap:hover .tooltip-text{
-        opacity: 1;
-        visibility: visible;
     }
 </style>
 """,
@@ -602,21 +652,18 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-# ✅ Label custom com tooltip instantâneo
+# ✅ Label com tooltip flutuante (não corta)
 st.sidebar.markdown(
     """
 <div class="ticker-label-row">
   <div class="ticker-label">Digite o Ticker</div>
-  <div class="tooltip-wrap">
-    <div class="ticker-help">?</div>
-    <div class="tooltip-text">Ticker é o código da ação na bolsa. Ex.: PETR4, VALE3, BBAS3. Você pode digitar com ou sem <b>.SA</b>.</div>
-  </div>
+  <div class="rb-tooltip-icon"
+       data-tooltip="Ticker é o código da ação na bolsa (ex.: PETR4, VALE3, BBAS3). Você pode digitar com ou sem .SA.">?</div>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-# ✅ Input sem label
 ticker_input_raw = st.sidebar.text_input(
     label="",
     value="",
