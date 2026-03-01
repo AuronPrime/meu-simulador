@@ -46,16 +46,23 @@ st.markdown(
         background-color: #f8fafc;
         border: 1px solid #e2e8f0;
         padding: 15px;
-        border-radius: 12px 12px 0 0;
+        border-radius: 12px;
+        margin-bottom: 10px;
         text-align: center;
     }
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
-    .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 18px; border-radius: 0 0 12px 12px; margin-bottom: 15px; }
+    /* ✅ Hierarquia (cards) */
+    .total-sub-muted { font-size: 0.88rem; color: #64748b; margin-top: 4px; }
+    .total-sub-profit { font-size: 0.95rem; font-weight: 800; color: #0f172a; margin-top: 6px; }
+    .small-muted { font-size: 0.78rem; color: #64748b; }
+
+    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
-    
+    .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
@@ -71,6 +78,29 @@ st.markdown(
         font-size: 0.9rem;
         line-height: 1.5;
     }
+
+    /* ✅ Status do ticker (menor e discreto) */
+    .ticker-status {
+        font-size: 0.78rem;
+        padding: 6px 8px;
+        border-radius: 8px;
+        margin-top: 6px;
+        border: 1px solid;
+        line-height: 1.25;
+        opacity: 0.95;
+    }
+    .ticker-ok { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
+    .ticker-bad { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+    .ticker-neutral { background: #f8fafc; color: #475569; border-color: #e2e8f0; }
+
+    /* ✅ Título do glossário sem "ícone/link" */
+    .glossario-title {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #1f77b4;
+        margin: 0 0 10px 0;
+        padding: 0;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -82,7 +112,7 @@ def formata_br(valor: float) -> str:
 st.title("Simulador de Acúmulo de Patrimônio")
 
 # =========================================================
-# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO
+# 2) FUNÇÕES DE SUPORTE
 # =========================================================
 
 def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30) -> pd.DataFrame:
@@ -128,6 +158,7 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
 
         if not ok:
             return pd.Series(dtype="float64")
+
         cur = chunk_end + pd.Timedelta(days=1)
 
     if not partes:
@@ -161,54 +192,6 @@ def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
 
     return pd.Series(dtype="float64"), "Renda Fixa"
 
-def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
-    """
-    Extrapola o índice caso a série do BCB esteja atrasada em relação a dt_fim.
-    Utiliza a taxa geométrica diária baseada nos últimos 12 meses disponíveis.
-    """
-    if s is None or s.empty:
-        return s
-
-    dt_fim_ts = pd.Timestamp(dt_fim)
-    if getattr(s.index, "tz", None) is not None:
-        dt_fim_ts = dt_fim_ts.tz_localize(s.index.tz)
-
-    ultima_data = s.index[-1]
-    
-    # Se o dado já cobre ou ultrapassa a data final, retorna a série original
-    if ultima_data >= dt_fim_ts:
-        return s
-
-    # Busca o valor de 12 meses atrás para calcular a média histórica recente
-    dt_12m_atras = ultima_data - pd.DateOffset(months=12)
-    s_historico = s.loc[:ultima_data]
-
-    try:
-        idx_12m = s_historico.index.get_indexer([dt_12m_atras], method='nearest')[0]
-        val_passado = s_historico.iloc[idx_12m]
-        data_passado = s_historico.index[idx_12m]
-    except Exception:
-        val_passado = s_historico.iloc[0]
-        data_passado = s_historico.index[0]
-
-    dias_decorridos = (ultima_data - data_passado).days
-    if dias_decorridos <= 0:
-        return s
-
-    # Taxa geométrica diária
-    taxa_diaria = (float(s.iloc[-1]) / float(val_passado)) ** (1 / dias_decorridos) - 1
-
-    datas_faltantes = pd.date_range(start=ultima_data + pd.Timedelta(days=1), end=dt_fim_ts, freq='D')
-    projetados = []
-    val_atual = float(s.iloc[-1])
-
-    for _ in datas_faltantes:
-        val_atual *= (1 + taxa_diaria)
-        projetados.append(val_atual)
-
-    s_proj = pd.Series(projetados, index=datas_faltantes)
-    return pd.concat([s, s_proj])
-
 def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
     close = df["Close"].astype(float)
     prev = close.shift(1)
@@ -233,15 +216,19 @@ def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
 def carregar_dados_completos(t: str) -> pd.DataFrame | None:
     if not t:
         return None
+
     t_sa = t if ".SA" in t else t + ".SA"
+
     try:
         tk = yf.Ticker(t_sa)
         df = tk.history(start="1900-01-01", auto_adjust=False, actions=True, interval="1d")
 
         if df is None or df.empty:
             return None
+
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+
         if getattr(df.index, "tz", None) is not None:
             df.index = df.index.tz_localize(None)
 
@@ -264,7 +251,9 @@ def carregar_dados_completos(t: str) -> pd.DataFrame | None:
 
         df["Price_Fact"] = price_factor.replace([np.inf, -np.inf], np.nan).fillna(1.0).cumprod()
         df["Total_Fact"] = total_factor.replace([np.inf, -np.inf], np.nan).fillna(1.0).cumprod()
+
         return df
+
     except Exception:
         return None
 
@@ -286,32 +275,49 @@ def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
 
 def ultimo_pregao_ate(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestamp | None:
     pos = df_index.get_indexer([dt], method="ffill")[0]
-    if pos == -1: return None
+    if pos == -1:
+        return None
     return df_index[pos]
 
 def proximo_pregao_a_partir(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestamp | None:
     pos = df_index.get_indexer([dt], method="bfill")[0]
-    if pos == -1: return None
+    if pos == -1:
+        return None
     return df_index[pos]
 
 def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fim_exclusivo: pd.Timestamp) -> pd.DatetimeIndex:
-    if len(df_index) == 0: return pd.DatetimeIndex([])
+    """
+    1 aporte por mês ancorado no dia do mês do início.
+    - Se mês não tiver o dia (29/30/31), usa último dia do mês.
+    - Se cair em dia sem pregão, executa no próximo pregão.
+    - dt_fim_exclusivo é fim EXCLUSIVO (data de avaliação), garantindo:
+      1 ano => 12 aportes, 5 anos => 60, 10 anos => 120.
+    """
+    if len(df_index) == 0:
+        return pd.DatetimeIndex([])
+
     dt_inicio = pd.to_datetime(dt_inicio).normalize()
     dt_fim_exclusivo = pd.to_datetime(dt_fim_exclusivo).normalize()
-    if dt_inicio >= dt_fim_exclusivo: return pd.DatetimeIndex([])
+
+    if dt_inicio >= dt_fim_exclusivo:
+        return pd.DatetimeIndex([])
 
     anchor_day = dt_inicio.day
     year, month = dt_inicio.year, dt_inicio.month
+
     datas_teoricas = []
     cur = dt_inicio
-
     for _ in range(5000):
-        if cur >= dt_fim_exclusivo: break
+        if cur >= dt_fim_exclusivo:
+            break
+
         datas_teoricas.append(cur)
+
         month += 1
         if month == 13:
             month = 1
             year += 1
+
         last_day = calendar.monthrange(year, month)[1]
         day = min(anchor_day, last_day)
         cur = pd.Timestamp(year=year, month=month, day=day)
@@ -319,19 +325,29 @@ def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fi
     datas_exec = []
     for d in datas_teoricas:
         d_exec = proximo_pregao_a_partir(df_index, d)
-        if d_exec is None: continue
-        if d_exec < dt_fim_exclusivo: datas_exec.append(d_exec)
+        if d_exec is None:
+            continue
+        if d_exec < dt_fim_exclusivo:
+            datas_exec.append(d_exec)
 
-    if not datas_exec: return pd.DatetimeIndex([])
+    if not datas_exec:
+        return pd.DatetimeIndex([])
+
     return pd.DatetimeIndex(datas_exec)
 
 def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.DatetimeIndex, serie_indice: pd.Series, data_ref: pd.Timestamp) -> float | None:
-    if serie_indice is None or serie_indice.empty: return None
+    if serie_indice is None or serie_indice.empty:
+        return None
+
     s = pd.Series(serie_indice).dropna().sort_index()
     end = s.asof(data_ref)
-    if pd.isna(end): return None
+    if pd.isna(end):
+        return None
+
     at = s.reindex(datas_aporte, method="ffill")
-    if at.isna().any(): return None
+    if at.isna().any():
+        return None
+
     return float((valor_mensal * (end / at)).sum())
 
 def calcular_horizonte(
@@ -343,17 +359,24 @@ def calcular_horizonte(
     s_ipca: pd.Series,
     s_ibov: pd.Series,
 ):
-    if df_full is None or df_full.empty or valor_mensal <= 0: return None
+    if df_full is None or df_full.empty or valor_mensal <= 0:
+        return None
+
     idx = df_full.index
 
     data_ref = ultimo_pregao_ate(idx, dt_ref_target)
-    if data_ref is None: return None
+    if data_ref is None:
+        return None
 
     dt_inicio_eff = proximo_pregao_a_partir(idx, dt_inicio_user)
-    if dt_inicio_eff is None or dt_inicio_eff >= data_ref: return None
+    if dt_inicio_eff is None:
+        return None
+    if dt_inicio_eff >= data_ref:
+        return None
 
-    datas_aporte = gerar_datas_aporte_mensal(idx, dt_inicio_eff, data_ref)
-    if len(datas_aporte) == 0: return None
+    datas_aporte = gerar_datas_aporte_mensal(idx, dt_inicio_eff, data_ref)  # fim exclusivo
+    if len(datas_aporte) == 0:
+        return None
 
     investido = float(len(datas_aporte) * valor_mensal)
 
@@ -380,19 +403,95 @@ def calcular_horizonte(
     }
 
 def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timestamp) -> pd.Series:
-    if s is None or s.empty: return pd.Series(dtype="float64")
+    if s is None or s.empty:
+        return pd.Series(dtype="float64")
     s = pd.Series(s).dropna().sort_index()
+
     base = s.asof(dt_base)
     if pd.isna(base):
         s2 = s.loc[(s.index >= dt_base) & (s.index <= dt_end)]
-        if s2.empty: return pd.Series(dtype="float64")
+        if s2.empty:
+            return pd.Series(dtype="float64")
         base = s2.iloc[0]
+
     s_plot = s.loc[(s.index >= dt_base) & (s.index <= dt_end)]
-    if s_plot.empty: return pd.Series(dtype="float64")
+    if s_plot.empty:
+        return pd.Series(dtype="float64")
+
     return (s_plot / float(base) - 1.0) * 100.0
 
 # =========================================================
-# 3) BARRA LATERAL (FORM + INSTRUÇÕES)
+# ✅ TICKER STATUS (certo/errado) – importado do outro código
+# =========================================================
+
+def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
+    t = (t or "").upper().strip()
+    if not t:
+        return "", ""
+    base = t[:-3] if t.endswith(".SA") else t
+    return base, base + ".SA"
+
+TICKER_APELIDOS: dict[str, str] = {
+    "BBAS3": "Banco do Brasil",
+    "ITUB3": "Banco Itaú",
+    "ITUB4": "Banco Itaú",
+    "BBDC3": "Banco Bradesco",
+    "BBDC4": "Banco Bradesco",
+    "SANB3": "Banco Santander",
+    "SANB4": "Banco Santander",
+    "PETR3": "Petrobras",
+    "PETR4": "Petrobras",
+    "VALE3": "Vale",
+}
+
+def _limpa_nome_yahoo(nome_raw: str) -> str:
+    if not nome_raw:
+        return ""
+    n = " ".join(str(nome_raw).strip().split())
+    remove_tokens = {"ON", "PN", "PNA", "PNB", "PNC", "UNT", "UNIT", "NM", "N1", "N2", "MA", "MB"}
+    parts = [p for p in n.replace("/", " ").split() if p.upper() not in remove_tokens]
+    n2 = " ".join(parts).strip()
+    for suf in [" S.A.", " SA"]:
+        n2 = n2.replace(suf, " ").strip()
+    n2 = " ".join(n2.split())
+
+    title = n2.lower().title()
+    for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
+        title = title.replace(w, w.lower())
+    return title.strip()
+
+def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
+    base = (base or "").upper().strip()
+    if base in TICKER_APELIDOS:
+        return TICKER_APELIDOS[base]
+    cleaned = _limpa_nome_yahoo(nome_yahoo)
+    return cleaned if cleaned else base
+
+@st.cache_data(ttl=60 * 10, show_spinner=False)
+def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
+    """
+    Retorna (ok, nome_raw). Cache curto para não consultar toda hora.
+    """
+    if not base:
+        return False, ""
+    _, t_sa = normaliza_ticker_usuario(base)
+    try:
+        tk = yf.Ticker(t_sa)
+        h = tk.history(period="5d", auto_adjust=False)
+        if h is None or h.empty:
+            return False, ""
+        nome = ""
+        try:
+            info = tk.info or {}
+            nome = info.get("shortName") or info.get("longName") or ""
+        except Exception:
+            nome = ""
+        return True, nome
+    except Exception:
+        return False, ""
+
+# =========================================================
+# 3) BARRA LATERAL (inputs + status do ticker)
 # =========================================================
 
 st.sidebar.markdown(
@@ -414,15 +513,43 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-with st.sidebar.form("form_simulador"):
-    ticker_input = st.text_input("Digite o Ticker", "").upper().strip()
-    valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
+ticker_input = st.sidebar.text_input("Digite o Ticker", "", key="ticker_input").upper().strip()
 
-    st.subheader("Período da Simulação")
-    data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
-    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
+# ✅ Caixa pequena informando se encontrou ou não
+ticker_box = st.sidebar.empty()
+if ticker_input:
+    base, _ = normaliza_ticker_usuario(ticker_input)
+    if len(base) >= 4:
+        ok, nome_raw = validar_ticker_yahoo(base)
+        if ok:
+            nome_show = nome_comercial_para_ticker(base, nome_raw)
+            ticker_box.markdown(
+                f'<div class="ticker-status ticker-ok">Encontrado: <b>{nome_show}</b> ({base})</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            ticker_box.markdown(
+                '<div class="ticker-status ticker-bad">Ticker não encontrado. Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b>…</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        ticker_box.markdown(
+            '<div class="ticker-status ticker-neutral">Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
+            unsafe_allow_html=True,
+        )
+else:
+    ticker_box.markdown(
+        '<div class="ticker-status ticker-neutral">Exemplos: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
+        unsafe_allow_html=True,
+    )
 
-    btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
+valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
+
+st.sidebar.subheader("Período da Simulação")
+data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
+data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
+
+btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
 st.sidebar.subheader("Benchmarks")
 mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI/Selic)", value=True, key="mostrar_rf")
@@ -447,31 +574,20 @@ if btn_analisar:
     if not ticker_input:
         st.error("Digite um ticker válido no menu lateral.")
         st.stop()
+
     if data_inicio >= data_fim:
         st.error("A data de **Início** deve ser anterior à data de **Fim**.")
         st.stop()
 
-    with st.status("Preparando simulação...", expanded=True) as status:
-        st.write("📥 Sincronizando dados de mercado (Yahoo Finance)...")
-        df_acao = carregar_dados_completos(ticker_input)
-        if df_acao is None or df_acao.empty:
-            status.update(label="Falha: Ticker não encontrado ou sem dados suficientes.", state="error")
-            st.stop()
-
-        st.write("🏦 Consultando Renda Fixa (CDI/Selic)...")
+    with st.spinner("Sincronizando dados de mercado..."):
         s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
-        # Projeta os dados faltantes caso o último dado do BCB seja anterior à data_fim
-        s_rf = projetar_indice_ate_fim(s_rf, data_fim)
-
-        st.write("🛒 Consultando inflação (IPCA)...")
         s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
-        s_ipca = projetar_indice_ate_fim(s_ipca, data_fim)
-
-        st.write("📊 Carregando Ibovespa...")
+        df_acao = carregar_dados_completos(ticker_input)
         s_ibov = carregar_ibov(data_inicio, data_fim)
-        s_ibov = projetar_indice_ate_fim(s_ibov, data_fim)
 
-        status.update(label="Simulação montada com sucesso!", state="complete", expanded=False)
+    if df_acao is None or df_acao.empty:
+        st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
+        st.stop()
 
     st.session_state["analysis_ready"] = True
     st.session_state["params"] = {
@@ -525,6 +641,7 @@ st.caption(
     f"Simulação carregada: **{ticker_exec}** | Aporte mensal: **{formata_br(valor_aporte_exec)}** | Período: **{data_inicio_exec.strftime('%d/%m/%Y')} → {data_fim_exec.strftime('%d/%m/%Y')}**"
 )
 
+# Recorte do ativo na janela
 df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
 if df_v.empty:
     st.error("Não há dados do ativo no período selecionado (Yahoo Finance). Tente ampliar/alterar o intervalo.")
@@ -613,7 +730,7 @@ fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
 st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------
-# CARDS
+# ✅ CARDS (10, 5 e 1 ano) – importado do outro código
 # -------------------------
 st.subheader("Simulação de Patrimônio Acumulado")
 
@@ -631,21 +748,18 @@ for anos, col in zip(horizontes, cols):
         dt_target = dt_ini_eff + pd.DateOffset(years=anos)
 
         if dt_target > dt_fim_user:
-            st.markdown(
-                f"""
-            <div class="total-card">
-                <div class="total-label">{titulo_col}</div>
-                <div class="total-amount">—</div>
-            </div>
-            <div class="info-card" style="border-top: 1px solid #e2e8f0;">
-                <div class="card-header">Período insuficiente</div>
-                <div class="card-item">
-                    Para calcular <b>{anos} anos</b>, aumente a data final para <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
-                </div>
-            </div>
-            """,
-                unsafe_allow_html=True,
+            dt_target_str = dt_target.date().strftime("%d/%m/%Y")
+            html_insuf = (
+                f'<div class="total-card">'
+                f'  <div class="total-label">{titulo_col}</div>'
+                f'  <div class="total-amount">—</div>'
+                f'</div>'
+                f'<div class="info-card">'
+                f'  <div class="card-header">Período insuficiente</div>'
+                f'  <div class="card-item">Para calcular <b>{anos} anos</b>, aumente a data <b>Fim</b> para <b>≥ {dt_target_str}</b> (ajuste no menu lateral).</div>'
+                f'</div>'
             )
+            st.markdown(html_insuf, unsafe_allow_html=True)
             continue
 
         res = calcular_horizonte(
@@ -659,30 +773,36 @@ for anos, col in zip(horizontes, cols):
         )
 
         if res is None:
-            st.markdown(
-                f"""
-            <div class="total-card">
-                <div class="total-label">{titulo_col}</div>
-                <div class="total-amount">—</div>
-            </div>
-            <div class="info-card" style="border-top: 1px solid #e2e8f0;">
-                <div class="card-header">Aviso</div>
-                <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>
-            </div>
-            """,
-                unsafe_allow_html=True,
+            html_none = (
+                f'<div class="total-card">'
+                f'  <div class="total-label">{titulo_col}</div>'
+                f'  <div class="total-amount">—</div>'
+                f'</div>'
+                f'<div class="info-card">'
+                f'  <div class="card-header">Aviso</div>'
+                f'  <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>'
+                f'</div>'
             )
+            st.markdown(html_none, unsafe_allow_html=True)
             continue
 
-        vf = res["vf"]
-        vi = res["vi"]
-        lucro = res["lucro"]
+        vf = float(res["vf"])
+        vi = float(res["vi"])
+        lucro = float(res["lucro"])
         v_rf = res["v_rf"]
         v_ipca = res["v_ipca"]
         v_ibov = res["v_ibov"]
-        
-        lucro_pct = (lucro / vi) * 100 if vi > 0 else 0
-        cor_lucro = "#16a34a" if lucro >= 0 else "#dc2626"
+        pct_lucro = (lucro / vi * 100.0) if vi > 0 else 0.0
+
+        html_total = (
+            f'<div class="total-card">'
+            f'  <div class="total-label">{titulo_col}</div>'
+            f'  <div class="total-amount">{formata_br(vf)}</div>'
+            f'  <div class="total-sub-muted">Investido: {formata_br(vi)}</div>'
+            f'  <div class="total-sub-profit">Lucro: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>'
+            f'</div>'
+        )
+        st.markdown(html_total, unsafe_allow_html=True)
 
         bench_lines = []
         if mostrar_rf and v_rf is not None:
@@ -697,54 +817,50 @@ for anos, col in zip(horizontes, cols):
         inicio_eff_str = res["dt_inicio_eff"].date().strftime("%d/%m/%Y")
         data_ref_str = res["data_ref"].date().strftime("%d/%m/%Y")
 
-        st.markdown(
-            f"""
-        <div class="total-card">
-            <div class="total-label">{titulo_col}</div>
-            <div class="total-amount">{formata_br(vf)}</div>
-        </div>
-        <div class="info-card">
-            <div class="card-item" style="font-size: 1.05rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
-            <div class="card-item" style="font-size: 1.15rem; color: {cor_lucro}; font-weight: 800; margin-bottom: 12px;">💰 Lucro: {formata_br(lucro)} ({lucro_pct:.2f}%)</div>
-            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
-            <div class="card-header">Benchmarks (Valor Corrigido)</div>
-            {''.join(bench_lines)}
-            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
-            <div class="card-header">Detalhes</div>
-            <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>
-            <div class="card-item">📍 <b>Avaliação:</b> {data_ref_str}</div>
-            <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
-        </div>
-        """,
-            unsafe_allow_html=True,
+        html_info = (
+            f'<div class="info-card">'
+            f'  <div class="card-header">Benchmarks (Valor Corrigido)</div>'
+            f'  {"".join(bench_lines)}'
+            f'  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">'
+            f'  <div class="card-header">Análise da Carteira</div>'
+            f'  <div class="card-item">📅 <b>Início efetivo (1º pregão):</b> {inicio_eff_str}</div>'
+            f'  <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str} <span class="small-muted">(último pregão disponível até a data-alvo)</span></div>'
+            f'  <div class="card-item">💵 <b>Capital Nominal Investido:</b> {formata_br(vi)}</div>'
+            f'  <div class="card-item">🗓️ <b>Nº de aportes:</b> {res["n_aportes"]}</div>'
+            f'  <div class="card-destaque">💰 Lucro Acumulado: {formata_br(lucro)} ({pct_lucro:.1f}%)</div>'
+            f'</div>'
         )
+        st.markdown(html_info, unsafe_allow_html=True)
 
+# -------------------------
+# ✅ GLOSSÁRIO (sem hyperlink no título)
+# -------------------------
 st.markdown(
     """
 <div class="glossario-container">
-<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
+  <div class="glossario-title">Guia de Termos e Indicadores</div>
 
-<span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores do mês atual ou faltantes são projetados com base na média dos últimos 12 meses.</span>
+  <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
+  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy.</span>
 
-<span class="glossario-termo">• Correção IPCA (Inflação)</span>
-<span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes de publicação pelo IBGE são estimadas usando a inflação média histórica do último ano.</span>
+  <span class="glossario-termo">• Correção IPCA (Inflação)</span>
+  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual.</span>
 
-<span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
+  <span class="glossario-termo">• Ibovespa</span>
+  <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
 
-<span class="glossario-termo">• Capital Nominal Investido</span>
-<span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
+  <span class="glossario-termo">• Capital Nominal Investido</span>
+  <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
 
-<span class="glossario-termo">• Lucro Acumulado</span>
-<span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
+  <span class="glossario-termo">• Lucro Acumulado</span>
+  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
 
-<span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+  <span class="glossario-termo">• Retorno Total</span>
+  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
 
-<p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
-<b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
-</p>
+  <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
+    <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+  </p>
 </div>
 """,
     unsafe_allow_html=True,
