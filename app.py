@@ -97,6 +97,60 @@ st.markdown(
         font-size: 0.9rem;
         line-height: 1.5;
     }
+
+    /* ✅ Status do ticker (bem pequeno) */
+    .ticker-status {
+        font-size: 0.75rem;
+        padding: 6px 8px;
+        border-radius: 8px;
+        margin-top: 6px;
+        border: 1px solid;
+        line-height: 1.25;
+        color: #0f172a;            /* letra preta */
+    }
+    .ticker-ok {
+        background: #dcfce7;       /* verde claro */
+        border-color: #86efac;
+    }
+    .ticker-bad {
+        background: #fee2e2;       /* vermelho claro */
+        border-color: #fca5a5;
+    }
+    .ticker-neutral {
+        background: #f8fafc;
+        border-color: #e2e8f0;
+        color: #475569;
+    }
+
+    /* ✅ Label do ticker com tooltip */
+    .ticker-label-row{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        margin: 6px 0 4px 0;
+    }
+    .ticker-label{
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #0f172a;
+        margin: 0;
+        padding: 0;
+    }
+    .ticker-help{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:18px;
+        height:18px;
+        border-radius:999px;
+        border:1px solid #cbd5e1;
+        color:#0f172a;
+        background:#ffffff;
+        font-size: 0.8rem;
+        font-weight: 800;
+        cursor: help;
+        user-select:none;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -201,7 +255,6 @@ def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
         dt_fim_ts = dt_fim_ts.tz_localize(s.index.tz)
 
     ultima_data = s.index[-1]
-
     if ultima_data >= dt_fim_ts:
         return s
 
@@ -310,19 +363,23 @@ def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
 
 def ultimo_pregao_ate(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestamp | None:
     pos = df_index.get_indexer([dt], method="ffill")[0]
-    if pos == -1: return None
+    if pos == -1:
+        return None
     return df_index[pos]
 
 def proximo_pregao_a_partir(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestamp | None:
     pos = df_index.get_indexer([dt], method="bfill")[0]
-    if pos == -1: return None
+    if pos == -1:
+        return None
     return df_index[pos]
 
 def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fim_exclusivo: pd.Timestamp) -> pd.DatetimeIndex:
-    if len(df_index) == 0: return pd.DatetimeIndex([])
+    if len(df_index) == 0:
+        return pd.DatetimeIndex([])
     dt_inicio = pd.to_datetime(dt_inicio).normalize()
     dt_fim_exclusivo = pd.to_datetime(dt_fim_exclusivo).normalize()
-    if dt_inicio >= dt_fim_exclusivo: return pd.DatetimeIndex([])
+    if dt_inicio >= dt_fim_exclusivo:
+        return pd.DatetimeIndex([])
 
     anchor_day = dt_inicio.day
     year, month = dt_inicio.year, dt_inicio.month
@@ -330,7 +387,8 @@ def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fi
     cur = dt_inicio
 
     for _ in range(5000):
-        if cur >= dt_fim_exclusivo: break
+        if cur >= dt_fim_exclusivo:
+            break
         datas_teoricas.append(cur)
         month += 1
         if month == 13:
@@ -343,19 +401,25 @@ def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fi
     datas_exec = []
     for d in datas_teoricas:
         d_exec = proximo_pregao_a_partir(df_index, d)
-        if d_exec is None: continue
-        if d_exec < dt_fim_exclusivo: datas_exec.append(d_exec)
+        if d_exec is None:
+            continue
+        if d_exec < dt_fim_exclusivo:
+            datas_exec.append(d_exec)
 
-    if not datas_exec: return pd.DatetimeIndex([])
+    if not datas_exec:
+        return pd.DatetimeIndex([])
     return pd.DatetimeIndex(datas_exec)
 
 def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.DatetimeIndex, serie_indice: pd.Series, data_ref: pd.Timestamp) -> float | None:
-    if serie_indice is None or serie_indice.empty: return None
+    if serie_indice is None or serie_indice.empty:
+        return None
     s = pd.Series(serie_indice).dropna().sort_index()
     end = s.asof(data_ref)
-    if pd.isna(end): return None
+    if pd.isna(end):
+        return None
     at = s.reindex(datas_aporte, method="ffill")
-    if at.isna().any(): return None
+    if at.isna().any():
+        return None
     return float((valor_mensal * (end / at)).sum())
 
 def calcular_horizonte(
@@ -367,17 +431,21 @@ def calcular_horizonte(
     s_ipca: pd.Series,
     s_ibov: pd.Series,
 ):
-    if df_full is None or df_full.empty or valor_mensal <= 0: return None
+    if df_full is None or df_full.empty or valor_mensal <= 0:
+        return None
     idx = df_full.index
 
     data_ref = ultimo_pregao_ate(idx, dt_ref_target)
-    if data_ref is None: return None
+    if data_ref is None:
+        return None
 
     dt_inicio_eff = proximo_pregao_a_partir(idx, dt_inicio_user)
-    if dt_inicio_eff is None or dt_inicio_eff >= data_ref: return None
+    if dt_inicio_eff is None or dt_inicio_eff >= data_ref:
+        return None
 
     datas_aporte = gerar_datas_aporte_mensal(idx, dt_inicio_eff, data_ref)
-    if len(datas_aporte) == 0: return None
+    if len(datas_aporte) == 0:
+        return None
 
     investido = float(len(datas_aporte) * valor_mensal)
 
@@ -404,19 +472,94 @@ def calcular_horizonte(
     }
 
 def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timestamp) -> pd.Series:
-    if s is None or s.empty: return pd.Series(dtype="float64")
+    if s is None or s.empty:
+        return pd.Series(dtype="float64")
     s = pd.Series(s).dropna().sort_index()
     base = s.asof(dt_base)
     if pd.isna(base):
         s2 = s.loc[(s.index >= dt_base) & (s.index <= dt_end)]
-        if s2.empty: return pd.Series(dtype="float64")
+        if s2.empty:
+            return pd.Series(dtype="float64")
         base = s2.iloc[0]
     s_plot = s.loc[(s.index >= dt_base) & (s.index <= dt_end)]
-    if s_plot.empty: return pd.Series(dtype="float64")
+    if s_plot.empty:
+        return pd.Series(dtype="float64")
     return (s_plot / float(base) - 1.0) * 100.0
 
 # =========================================================
-# 3) BARRA LATERAL (FORM + INSTRUÇÕES)
+# ✅ UX: STATUS DO TICKER (BBAS3 vs BBAS3.SA + nome comercial)
+# =========================================================
+
+def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
+    t = (t or "").upper().strip()
+    if not t:
+        return "", ""
+    base = t[:-3] if t.endswith(".SA") else t
+    return base, base + ".SA"
+
+# Apelidos para mostrar “nome comercial”
+TICKER_APELIDOS: dict[str, str] = {
+    "BBAS3": "Banco do Brasil",
+    "ITUB3": "Banco Itaú",
+    "ITUB4": "Banco Itaú",
+    "BBDC3": "Banco Bradesco",
+    "BBDC4": "Banco Bradesco",
+    "SANB3": "Banco Santander",
+    "SANB4": "Banco Santander",
+    "PETR3": "Petrobras",
+    "PETR4": "Petrobras",
+    "VALE3": "Vale",
+}
+
+def _limpa_nome_yahoo(nome_raw: str) -> str:
+    if not nome_raw:
+        return ""
+    n = " ".join(str(nome_raw).strip().split())
+    remove_tokens = {"ON", "PN", "PNA", "PNB", "PNC", "UNT", "UNIT", "NM", "N1", "N2", "MA", "MB"}
+    parts = [p for p in n.replace("/", " ").split() if p.upper() not in remove_tokens]
+    n2 = " ".join(parts).strip()
+    for suf in [" S.A.", " SA"]:
+        n2 = n2.replace(suf, " ").strip()
+    n2 = " ".join(n2.split())
+
+    title = n2.lower().title()
+    for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
+        title = title.replace(w, w.lower())
+    return title.strip()
+
+def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
+    base = (base or "").upper().strip()
+    if base in TICKER_APELIDOS:
+        return TICKER_APELIDOS[base]
+    cleaned = _limpa_nome_yahoo(nome_yahoo)
+    return cleaned if cleaned else base
+
+@st.cache_data(ttl=60 * 10, show_spinner=False)
+def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
+    """
+    Retorna (ok, nome_raw) para exibir status abaixo do input.
+    Cache curto para não ficar consultando repetidamente.
+    """
+    if not base:
+        return False, ""
+    _, t_sa = normaliza_ticker_usuario(base)
+    try:
+        tk = yf.Ticker(t_sa)
+        h = tk.history(period="5d", auto_adjust=False)
+        if h is None or h.empty:
+            return False, ""
+        nome = ""
+        try:
+            info = tk.info or {}
+            nome = info.get("shortName") or info.get("longName") or ""
+        except Exception:
+            nome = ""
+        return True, nome
+    except Exception:
+        return False, ""
+
+# =========================================================
+# 3) BARRA LATERAL (FORM + INSTRUÇÕES + TICKER STATUS + TOOLTIP)
 # =========================================================
 
 st.sidebar.markdown(
@@ -438,8 +581,56 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
+# ✅ Label custom com tooltip "?"
+st.sidebar.markdown(
+    """
+<div class="ticker-label-row">
+  <div class="ticker-label">Digite o Ticker</div>
+  <div class="ticker-help" title="Ticker é o código da ação na bolsa. Ex.: PETR4, VALE3, BBAS3. Você pode digitar com ou sem .SA.">?</div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# ✅ Input sem label (para não duplicar o texto)
+ticker_input_raw = st.sidebar.text_input(
+    label="",
+    value="",
+    key="ticker_input",
+    label_visibility="collapsed",
+)
+ticker_input_raw = (ticker_input_raw or "").upper().strip()
+base_ticker, _ = normaliza_ticker_usuario(ticker_input_raw)
+
+# ✅ Status pequeno abaixo do campo (atualiza ao digitar)
+status_box = st.sidebar.empty()
+if base_ticker:
+    if len(base_ticker) >= 4:
+        ok, nome_raw = validar_ticker_yahoo(base_ticker)
+        if ok:
+            nome_comercial = nome_comercial_para_ticker(base_ticker, nome_raw)
+            status_box.markdown(
+                f'<div class="ticker-status ticker-ok">Encontrado: <b>{nome_comercial}</b> ({base_ticker})</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            status_box.markdown(
+                '<div class="ticker-status ticker-bad">Ticker não encontrado. Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b>…</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        status_box.markdown(
+            '<div class="ticker-status ticker-neutral">Exemplos: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
+            unsafe_allow_html=True,
+        )
+else:
+    status_box.markdown(
+        '<div class="ticker-status ticker-neutral">Exemplos: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
+        unsafe_allow_html=True,
+    )
+
+# ✅ Form mantém resto (aporte/datas/botão)
 with st.sidebar.form("form_simulador"):
-    ticker_input = st.text_input("Digite o Ticker", "").upper().strip()
     valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
     st.subheader("Período da Simulação")
@@ -468,6 +659,8 @@ Desenvolvido por: <br>
 # =========================================================
 
 if btn_analisar:
+    ticker_input = base_ticker  # ✅ usa sempre sem ".SA"
+
     if not ticker_input:
         st.error("Digite um ticker válido no menu lateral.")
         st.stop()
@@ -636,7 +829,7 @@ fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
 st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------
-# ✅ “Simulação de Patrimônio Acumulado” sem hyperlink/âncora
+# “Simulação de Patrimônio Acumulado” (sem hyperlink/âncora)
 # -------------------------
 st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
 
@@ -705,8 +898,8 @@ for anos, col in zip(horizontes, cols):
         v_ibov = res["v_ibov"]
 
         rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0
-        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"  # verde escuro / vermelho
-        emoji_rendimento = "📈"  # mais profissional
+        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"
+        emoji_rendimento = "📈"
 
         bench_lines = []
         if mostrar_rf and v_rf is not None:
@@ -746,7 +939,7 @@ for anos, col in zip(horizontes, cols):
         )
 
 # -------------------------
-# ✅ GUIA (título maior e sem hyperlink/âncora)
+# GUIA
 # -------------------------
 st.markdown(
     """
