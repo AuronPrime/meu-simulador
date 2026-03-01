@@ -104,6 +104,15 @@ st.markdown(
         color: #475569;
         border-color: #e2e8f0;
     }
+
+    /* ✅ Título do glossário sem "ícone de link" */
+    .glossario-title {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #1f77b4;
+        margin: 0 0 10px 0;
+        padding: 0;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -135,6 +144,9 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30)
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
+    """
+    Retorna série CUMULATIVA (cumprod) a partir da taxa do SGS.
+    """
     if d_inicio is None or d_fim is None or d_inicio > d_fim:
         return pd.Series(dtype="float64")
 
@@ -184,16 +196,22 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     return (1.0 + s).cumprod()
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
-def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
+def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str, bool]:
+    """
+    UX: sempre exibimos como "CDI" para o usuário.
+    Internamente:
+      - tenta CDI (SGS 12)
+      - se falhar, usa Selic (SGS 11) como proxy
+    """
     s_cdi = busca_indice_bcb(12, d_inicio, d_fim)
     if s_cdi is not None and not s_cdi.empty:
-        return s_cdi, "CDI"
+        return s_cdi, "CDI", False
 
     s_selic = busca_indice_bcb(11, d_inicio, d_fim)
     if s_selic is not None and not s_selic.empty:
-        return s_selic, "Selic (proxy CDI)"
+        return s_selic, "CDI", True  # ✅ label amigável
 
-    return pd.Series(dtype="float64"), "Renda Fixa"
+    return pd.Series(dtype="float64"), "CDI", False
 
 def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
     close = df["Close"].astype(float)
@@ -293,8 +311,7 @@ def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fi
     1 aporte por mês ancorado no dia do mês do início.
     - Se mês não tiver o dia (29/30/31), usa último dia do mês.
     - Se cair em dia sem pregão, executa no próximo pregão.
-    - dt_fim_exclusivo é fim EXCLUSIVO (data de avaliação), garantindo:
-      1 ano => 12 aportes, 5 anos => 60, 10 anos => 120.
+    - dt_fim_exclusivo é fim EXCLUSIVO (data de avaliação)
     """
     if len(df_index) == 0:
         return pd.DatetimeIndex([])
@@ -451,20 +468,14 @@ def _limpa_nome_yahoo(nome_raw: str) -> str:
     if not nome_raw:
         return ""
     n = " ".join(str(nome_raw).strip().split())
-    # remove tokens comuns de classe/segmento
     remove_tokens = {"ON", "PN", "PNA", "PNB", "PNC", "UNT", "UNIT", "NM", "N1", "N2", "MA", "MB"}
     parts = [p for p in n.replace("/", " ").split() if p.upper() not in remove_tokens]
     n2 = " ".join(parts).strip()
-
-    # remove sufixos muito comuns
-    for suf in [" S.A.", " SA", " -", "-"]:
+    for suf in [" S.A.", " SA"]:
         n2 = n2.replace(suf, " ").strip()
     n2 = " ".join(n2.split())
-
-    # título mais “humano”
     low = n2.lower()
     title = low.title()
-    # conectivos em pt
     for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
         title = title.replace(w, w.lower())
     return title.strip()
@@ -478,9 +489,6 @@ def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
 
 @st.cache_data(ttl=60 * 10, show_spinner=False)
 def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
-    """
-    Retorna (ok, nome_raw). Cache curto para não consultar toda hora.
-    """
     if not base:
         return False, ""
     _, t_sa = normaliza_ticker_usuario(base)
@@ -499,72 +507,79 @@ def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
     except Exception:
         return False, ""
 
-def ipca_diario_com_estimativa_12m(s_ipca_cum: pd.Series, d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
+def ipca_diario_com_estimativa_mes_atual(s_ipca_cum: pd.Series, d_inicio: date, d_fim: date) -> tuple[pd.Series, bool]:
     """
-    - Recebe série CUMULATIVA (cumprod) do IPCA mensal.
-    - Densifica para DIÁRIO.
-    - Se o IPCA oficial não chegou até d_fim, estende com IPCA estimado:
-      média dos últimos 12 meses (taxa mensal média), convertida para fator diário aproximado.
+    Objetivo:
+    - Usar o IPCA REAL (BCB) para todos os meses já publicados.
+    - Se o mês vigente ainda não foi publicado, completar APENAS o mês vigente
+      (do 1º dia do mês vigente até d_fim) com estimativa baseada na média dos últimos 12 meses.
+
+    Entrada: s_ipca_cum = série CUMULATIVA (cumprod) do IPCA mensal (SGS 433).
+    Saída:
+      - série diária (D) de fatores cumulativos
+      - flag "estimado" (True se precisou completar o mês vigente)
     """
-    nome = "IPCA"
     if s_ipca_cum is None or s_ipca_cum.empty:
-        return pd.Series(dtype="float64"), nome
+        return pd.Series(dtype="float64"), False
 
     s = pd.Series(s_ipca_cum).dropna().sort_index()
     if s.empty:
-        return pd.Series(dtype="float64"), nome
+        return pd.Series(dtype="float64"), False
 
-    end_dt = pd.Timestamp(d_fim).normalize()
     start_dt = pd.Timestamp(d_inicio).normalize()
-    last_dt = pd.Timestamp(s.index.max()).normalize()
+    end_dt = pd.Timestamp(d_fim).normalize()
+    last_official = pd.Timestamp(s.index.max()).normalize()
 
-    # Se faltar IPCA (publicação atrasada), estimar via média 12m
-    if end_dt > last_dt:
-        factors = (s / s.shift(1)).dropna()
-        rates = (factors - 1.0).dropna()
-        if not rates.empty:
-            avg_m = float(rates.tail(12).mean())
-            daily_factor = (1.0 + avg_m) ** (1.0 / 30.4375)
+    estimado = False
 
-            days = pd.date_range(last_dt + pd.Timedelta(days=1), end_dt, freq="D")
-            if len(days) > 0:
-                n = np.arange(1, len(days) + 1, dtype=float)
-                base_val = float(s.iloc[-1])
-                vals = base_val * (daily_factor ** n)
-                s_est = pd.Series(vals, index=days)
-                s = pd.concat([s, s_est])
-                nome = "IPCA (estimado 12m)"
+    # Se a data final do usuário passa do último mês publicado, completamos SOMENTE o mês vigente.
+    if end_dt > last_official:
+        # Próximo início de mês (mês vigente no contexto pós-last_official)
+        # Ex: last_official=01/01, next_month_start=01/02 => estimar só a partir de 01/02
+        next_month_start = (last_official + pd.offsets.MonthBegin(1)).normalize()
 
-    # Densifica para diário no intervalo solicitado
+        # Só estimar se o usuário realmente entrou no mês seguinte (mês vigente ainda não publicado)
+        if end_dt >= next_month_start:
+            factors = (s / s.shift(1)).dropna()
+            rates = (factors - 1.0).dropna()  # taxa mensal
+            if not rates.empty:
+                avg_m = float(rates.tail(12).mean())
+                daily_factor = (1.0 + avg_m) ** (1.0 / 30.4375)
+
+                days = pd.date_range(next_month_start, end_dt, freq="D")
+                if len(days) > 0:
+                    n = np.arange(0, len(days), dtype=float)  # dia 0 = mantém o valor do último mês publicado
+                    base_val = float(s.iloc[-1])
+                    vals = base_val * (daily_factor ** n)
+                    s_est = pd.Series(vals, index=days)
+
+                    s = pd.concat([s, s_est])
+                    estimado = True
+
     full_days = pd.date_range(start_dt, end_dt, freq="D")
-    s_daily = pd.Series(s).sort_index().reindex(full_days, method="ffill")
-    s_daily = s_daily.fillna(method="bfill")
-    return s_daily.astype(float), nome
+    s_daily = s.reindex(full_days, method="ffill").fillna(method="bfill")
+    return s_daily.astype(float), estimado
 
-def carregar_ipca_com_estimativa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str, bool]:
+def carregar_ipca_com_estimativa(d_inicio: date, d_fim: date) -> tuple[pd.Series, bool]:
     """
-    ✅ Corrige o caso em que o usuário escolhe um intervalo recente (ex.: mês atual)
-    e o BCB não retorna nenhum ponto dentro do range.
-    Estratégia:
-    - Buscar IPCA em uma janela maior (36 meses até d_fim),
-      para sempre ter histórico suficiente.
-    - Densificar para diário e estimar se necessário.
+    Correção do "intervalo recente vazio":
+    - Busca IPCA em janela maior (36 meses) até d_fim para garantir histórico.
+    - Densifica para diário e completa apenas o mês vigente, se necessário.
     """
     end_dt = pd.Timestamp(d_fim).normalize()
     start_busca = (end_dt - pd.DateOffset(months=36)).date()
 
     s_raw = busca_indice_bcb(433, start_busca, d_fim)
     if s_raw is None or s_raw.empty:
-        # fallback mais amplo
+        # fallback ainda mais amplo
         start_busca2 = (end_dt - pd.DateOffset(years=10)).date()
         s_raw = busca_indice_bcb(433, start_busca2, d_fim)
 
     if s_raw is None or s_raw.empty:
-        return pd.Series(dtype="float64"), "IPCA", False
+        return pd.Series(dtype="float64"), False
 
-    s_daily, nome = ipca_diario_com_estimativa_12m(s_raw, d_inicio, d_fim)
-    estimado = "estimado" in (nome or "").lower()
-    return s_daily, nome, estimado
+    s_daily, estimado = ipca_diario_com_estimativa_mes_atual(s_raw, d_inicio, d_fim)
+    return s_daily, estimado
 
 # =========================================================
 # 3) BARRA LATERAL + STATUS DE TICKER
@@ -627,7 +642,7 @@ data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_v
 btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
 
 st.sidebar.subheader("Benchmarks")
-mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI/Selic)", value=True, key="mostrar_rf")
+mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI)", value=True, key="mostrar_rf")
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True, key="mostrar_ipca")
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True, key="mostrar_ibov")
 
@@ -666,18 +681,21 @@ if btn_analisar:
         st.stop()
 
     with st.spinner("Carregando CDI / IPCA (BCB/SGS)..."):
-        s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
+        s_rf, nome_rf, rf_proxy = carregar_renda_fixa(data_inicio, data_fim)
         if s_rf is None or s_rf.empty:
-            load_warnings.append("BCB indisponível: não foi possível carregar CDI/Selic. Exibindo apenas o ativo.")
+            load_warnings.append("BCB indisponível: não foi possível carregar CDI (ou Selic). Exibindo apenas o ativo.")
+        elif rf_proxy:
+            # ✅ não precisa poluir UI; guardamos para o glossário
+            pass
 
-        # ✅ IPCA: busca em janela maior + estimativa 12m se faltar publicação
-        s_ipca_daily, nome_ipca, ipca_estimado = carregar_ipca_com_estimativa(data_inicio, data_fim)
+        # ✅ IPCA: real até o último mês publicado + estimativa só para o mês vigente
+        s_ipca_daily, ipca_estimado = carregar_ipca_com_estimativa(data_inicio, data_fim)
         if s_ipca_daily is None or s_ipca_daily.empty:
             load_warnings.append("BCB indisponível: não foi possível carregar IPCA. Exibindo apenas o ativo.")
             s_ipca_daily = pd.Series(dtype="float64")
-            nome_ipca = "IPCA"
         elif ipca_estimado:
-            load_infos.append("IPCA do período ainda não foi publicado; usando estimativa baseada na média dos últimos 12 meses.")
+            # ✅ texto mais amigável e objetivo
+            load_infos.append("IPCA do mês atual ainda não foi divulgado; completamos apenas este mês com uma estimativa (média 12m).")
 
     with st.spinner("Carregando Ibovespa (Yahoo)..."):
         s_ibov = carregar_ibov(data_inicio, data_fim)
@@ -698,9 +716,9 @@ if btn_analisar:
     }
     st.session_state["df_acao"] = df_acao
     st.session_state["s_rf"] = s_rf if s_rf is not None else pd.Series(dtype="float64")
-    st.session_state["nome_rf"] = nome_rf if nome_rf else "Renda Fixa"
+    st.session_state["nome_rf"] = nome_rf  # ✅ sempre "CDI"
+    st.session_state["rf_proxy"] = bool(rf_proxy)
     st.session_state["s_ipca"] = s_ipca_daily
-    st.session_state["nome_ipca"] = nome_ipca
     st.session_state["s_ibov"] = s_ibov if s_ibov is not None else pd.Series(dtype="float64")
 
 if not st.session_state.get("analysis_ready", False):
@@ -731,9 +749,9 @@ data_fim_exec = params["data_fim"]
 
 df_acao = st.session_state["df_acao"]
 s_rf = st.session_state.get("s_rf", pd.Series(dtype="float64"))
-nome_rf = st.session_state.get("nome_rf", "Renda Fixa")
+nome_rf = st.session_state.get("nome_rf", "CDI")
+rf_proxy = st.session_state.get("rf_proxy", False)
 s_ipca = st.session_state.get("s_ipca", pd.Series(dtype="float64"))
-nome_ipca = st.session_state.get("nome_ipca", "IPCA")
 s_ibov = st.session_state.get("s_ibov", pd.Series(dtype="float64"))
 
 dt_ini_user = pd.to_datetime(data_inicio_exec).normalize()
@@ -787,7 +805,7 @@ if mostrar_rf and (s_rf is not None) and (not s_rf.empty):
 if mostrar_ipca and (s_ipca is not None) and (not s_ipca.empty):
     y_ipca = serie_pct_desde_base(s_ipca, dt_base_chart, dt_end_chart)
     if not y_ipca.empty:
-        fig.add_trace(go.Scatter(x=y_ipca.index, y=y_ipca, name=nome_ipca,
+        fig.add_trace(go.Scatter(x=y_ipca.index, y=y_ipca, name="IPCA",
                                  line=dict(color="red", width=2)))
 
 if mostrar_ibov and (s_ibov is not None) and (not s_ibov.empty):
@@ -917,7 +935,7 @@ for anos, col in zip(horizontes, cols):
         if mostrar_ibov and v_ibov is not None:
             bench_lines.append(f'<div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>')
         if mostrar_ipca and v_ipca is not None:
-            bench_lines.append(f'<div class="card-item">🛡️ <b>{nome_ipca}:</b> {formata_br(v_ipca)}</div>')
+            bench_lines.append(f'<div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>')
         if not bench_lines:
             bench_lines.append('<div class="card-item">—</div>')
 
@@ -940,32 +958,45 @@ for anos, col in zip(horizontes, cols):
         )
         st.markdown(html_info, unsafe_allow_html=True)
 
+# -------------------------
+# GLOSSÁRIO (sem ícone de link)
+# -------------------------
+rf_texto = (
+    "O app tenta usar o <b>CDI</b>. Se o CDI não estiver disponível na fonte, usamos a <b>Selic</b> como aproximação."
+)
+
+ipca_texto = (
+    "Atualiza o valor investido para o poder de compra atual. "
+    "Quando o IPCA do <b>mês atual</b> ainda não estiver publicado pelo BCB, "
+    "o app completa <b>apenas esse mês</b> com uma estimativa baseada na <b>média dos últimos 12 meses</b>."
+)
+
 st.markdown(
-    """
+    f"""
 <div class="glossario-container">
-<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
+  <div class="glossario-title">Guia de Termos e Indicadores</div>
 
-<span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy.</span>
+  <span class="glossario-termo">• Renda Fixa (CDI)</span>
+  <span class="glossario-def">{rf_texto}</span>
 
-<span class="glossario-termo">• Correção IPCA (Inflação)</span>
-<span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Quando o IPCA do período ainda não estiver publicado, o app usa uma estimativa baseada na <b>média dos últimos 12 meses</b>.</span>
+  <span class="glossario-termo">• Correção IPCA (Inflação)</span>
+  <span class="glossario-def">{ipca_texto}</span>
 
-<span class="glossario-termo">• Ibovespa</span>
-<span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
+  <span class="glossario-termo">• Ibovespa</span>
+  <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
 
-<span class="glossario-termo">• Capital Nominal Investido</span>
-<span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
+  <span class="glossario-termo">• Capital Nominal Investido</span>
+  <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
 
-<span class="glossario-termo">• Lucro Acumulado</span>
-<span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
+  <span class="glossario-termo">• Lucro Acumulado</span>
+  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
 
-<span class="glossario-termo">• Retorno Total</span>
-<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+  <span class="glossario-termo">• Retorno Total</span>
+  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
 
-<p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
-<b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
-</p>
+  <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
+    <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+  </p>
 </div>
 """,
     unsafe_allow_html=True,
