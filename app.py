@@ -79,7 +79,7 @@ st.markdown(
         line-height: 1.5;
     }
 
-    /* ✅ Status do ticker (menor e discreto) */
+    /* Status do ticker (menor e discreto) */
     .ticker-status {
         font-size: 0.78rem;
         padding: 6px 8px;
@@ -105,7 +105,7 @@ st.markdown(
         border-color: #e2e8f0;
     }
 
-    /* ✅ Título do glossário sem "ícone de link" */
+    /* Título do glossário sem “ícone de link” */
     .glossario-title {
         font-size: 1.45rem;
         font-weight: 800;
@@ -146,6 +146,7 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30)
 def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     """
     Retorna série CUMULATIVA (cumprod) a partir da taxa do SGS.
+    (Para IPCA 433: variação mensal -> vira um "fator acumulado" ao longo do tempo.)
     """
     if d_inicio is None or d_fim is None or d_inicio > d_fim:
         return pd.Series(dtype="float64")
@@ -198,10 +199,10 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str, bool]:
     """
-    UX: sempre exibimos como "CDI" para o usuário.
-    Internamente:
-      - tenta CDI (SGS 12)
-      - se falhar, usa Selic (SGS 11) como proxy
+    UX: sempre exibimos como "CDI".
+    - tenta CDI (SGS 12)
+    - se falhar, usa Selic (SGS 11) como proxy
+    Retorna (serie, nome_exibicao, usou_selic_proxy)
     """
     s_cdi = busca_indice_bcb(12, d_inicio, d_fim)
     if s_cdi is not None and not s_cdi.empty:
@@ -209,7 +210,7 @@ def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str, bo
 
     s_selic = busca_indice_bcb(11, d_inicio, d_fim)
     if s_selic is not None and not s_selic.empty:
-        return s_selic, "CDI", True  # ✅ label amigável
+        return s_selic, "CDI", True
 
     return pd.Series(dtype="float64"), "CDI", False
 
@@ -450,7 +451,7 @@ def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
         base = t
     return base, base + ".SA"
 
-# ✅ Apelidos (nome “comercial”) para os mais comuns
+# Apelidos “comerciais”
 TICKER_APELIDOS: dict[str, str] = {
     "BBAS3": "Banco do Brasil",
     "ITUB3": "Banco Itaú",
@@ -507,79 +508,68 @@ def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
     except Exception:
         return False, ""
 
-def ipca_diario_com_estimativa_mes_atual(s_ipca_cum: pd.Series, d_inicio: date, d_fim: date) -> tuple[pd.Series, bool]:
+# -------------------------
+# IPCA (corrigido): histórico real + estimativa APENAS do mês vigente
+# -------------------------
+def carregar_ipca_diario_com_mes_vigente_estimado(d_inicio: date, d_fim: date) -> pd.Series:
     """
-    Objetivo:
-    - Usar o IPCA REAL (BCB) para todos os meses já publicados.
-    - Se o mês vigente ainda não foi publicado, completar APENAS o mês vigente
-      (do 1º dia do mês vigente até d_fim) com estimativa baseada na média dos últimos 12 meses.
-
-    Entrada: s_ipca_cum = série CUMULATIVA (cumprod) do IPCA mensal (SGS 433).
-    Saída:
-      - série diária (D) de fatores cumulativos
-      - flag "estimado" (True se precisou completar o mês vigente)
+    - Busca IPCA (433) em janela suficiente para ter histórico, mesmo em intervalos curtos recentes.
+    - Usa o IPCA real (BCB) para meses disponíveis.
+    - Se o mês do 'd_fim' não estiver disponível, estima APENAS esse mês (mês vigente),
+      usando a média dos últimos 12 meses como taxa mensal média.
+    - Retorna série DIÁRIA de fatores cumulativos (para correção via end/at).
     """
-    if s_ipca_cum is None or s_ipca_cum.empty:
-        return pd.Series(dtype="float64"), False
-
-    s = pd.Series(s_ipca_cum).dropna().sort_index()
-    if s.empty:
-        return pd.Series(dtype="float64"), False
-
     start_dt = pd.Timestamp(d_inicio).normalize()
     end_dt = pd.Timestamp(d_fim).normalize()
-    last_official = pd.Timestamp(s.index.max()).normalize()
 
-    estimado = False
-
-    # Se a data final do usuário passa do último mês publicado, completamos SOMENTE o mês vigente.
-    if end_dt > last_official:
-        # Próximo início de mês (mês vigente no contexto pós-last_official)
-        # Ex: last_official=01/01, next_month_start=01/02 => estimar só a partir de 01/02
-        next_month_start = (last_official + pd.offsets.MonthBegin(1)).normalize()
-
-        # Só estimar se o usuário realmente entrou no mês seguinte (mês vigente ainda não publicado)
-        if end_dt >= next_month_start:
-            factors = (s / s.shift(1)).dropna()
-            rates = (factors - 1.0).dropna()  # taxa mensal
-            if not rates.empty:
-                avg_m = float(rates.tail(12).mean())
-                daily_factor = (1.0 + avg_m) ** (1.0 / 30.4375)
-
-                days = pd.date_range(next_month_start, end_dt, freq="D")
-                if len(days) > 0:
-                    n = np.arange(0, len(days), dtype=float)  # dia 0 = mantém o valor do último mês publicado
-                    base_val = float(s.iloc[-1])
-                    vals = base_val * (daily_factor ** n)
-                    s_est = pd.Series(vals, index=days)
-
-                    s = pd.concat([s, s_est])
-                    estimado = True
-
-    full_days = pd.date_range(start_dt, end_dt, freq="D")
-    s_daily = s.reindex(full_days, method="ffill").fillna(method="bfill")
-    return s_daily.astype(float), estimado
-
-def carregar_ipca_com_estimativa(d_inicio: date, d_fim: date) -> tuple[pd.Series, bool]:
-    """
-    Correção do "intervalo recente vazio":
-    - Busca IPCA em janela maior (36 meses) até d_fim para garantir histórico.
-    - Densifica para diário e completa apenas o mês vigente, se necessário.
-    """
-    end_dt = pd.Timestamp(d_fim).normalize()
-    start_busca = (end_dt - pd.DateOffset(months=36)).date()
+    # garante histórico mesmo se o usuário pegar só “mês atual”
+    start_busca = min(pd.Timestamp(d_inicio), (end_dt - pd.DateOffset(months=36))).date()
 
     s_raw = busca_indice_bcb(433, start_busca, d_fim)
     if s_raw is None or s_raw.empty:
-        # fallback ainda mais amplo
-        start_busca2 = (end_dt - pd.DateOffset(years=10)).date()
-        s_raw = busca_indice_bcb(433, start_busca2, d_fim)
+        return pd.Series(dtype="float64")
 
-    if s_raw is None or s_raw.empty:
-        return pd.Series(dtype="float64"), False
+    s_raw = pd.Series(s_raw).dropna().sort_index()
+    if s_raw.empty:
+        return pd.Series(dtype="float64")
 
-    s_daily, estimado = ipca_diario_com_estimativa_mes_atual(s_raw, d_inicio, d_fim)
-    return s_daily, estimado
+    # série diária completa (do start_busca ao fim), para termos "base" do mês anterior
+    all_days = pd.date_range(pd.Timestamp(start_busca).normalize(), end_dt, freq="D")
+    s_daily_all = s_raw.reindex(all_days, method="ffill").bfill()
+
+    # Detecta se existe IPCA publicado para o mês do end_dt
+    months_avail = pd.Index(s_raw.index).to_period("M").unique()
+    end_month = end_dt.to_period("M")
+
+    if end_month not in months_avail:
+        # estimar APENAS o mês vigente (mês do end_dt)
+        month_start = end_month.to_timestamp(how="start").normalize()
+
+        # média 12m (taxa mensal)
+        factors = (s_raw / s_raw.shift(1)).dropna()
+        rates = (factors - 1.0).dropna()
+        if not rates.empty:
+            avg_m = float(rates.tail(12).mean())
+        else:
+            avg_m = 0.0
+
+        # converte taxa mensal média para fator diário aproximado
+        daily_factor = (1.0 + avg_m) ** (1.0 / 30.4375)
+
+        # base = último valor disponível até o mês anterior
+        base_val = s_daily_all.asof(month_start - pd.Timedelta(days=1))
+        if pd.isna(base_val):
+            base_val = float(s_daily_all.iloc[0])
+
+        days_range = pd.date_range(month_start, end_dt, freq="D")
+        n = np.arange(0, len(days_range), dtype=float)  # dia 0 = base
+        vals = float(base_val) * (daily_factor ** n)
+        s_daily_all.loc[days_range] = vals
+
+    # recorta para o intervalo do usuário
+    user_days = pd.date_range(start_dt, end_dt, freq="D")
+    s_user = s_daily_all.reindex(user_days, method="ffill").bfill()
+    return s_user.astype(float)
 
 # =========================================================
 # 3) BARRA LATERAL + STATUS DE TICKER
@@ -671,7 +661,6 @@ if btn_analisar:
 
     base, _ = normaliza_ticker_usuario(ticker_input)
     load_warnings: list[str] = []
-    load_infos: list[str] = []
 
     with st.spinner("Carregando ativo (Yahoo Finance)..."):
         df_acao = carregar_dados_completos(base)
@@ -684,18 +673,12 @@ if btn_analisar:
         s_rf, nome_rf, rf_proxy = carregar_renda_fixa(data_inicio, data_fim)
         if s_rf is None or s_rf.empty:
             load_warnings.append("BCB indisponível: não foi possível carregar CDI (ou Selic). Exibindo apenas o ativo.")
-        elif rf_proxy:
-            # ✅ não precisa poluir UI; guardamos para o glossário
-            pass
 
-        # ✅ IPCA: real até o último mês publicado + estimativa só para o mês vigente
-        s_ipca_daily, ipca_estimado = carregar_ipca_com_estimativa(data_inicio, data_fim)
+        # ✅ IPCA real + estimativa apenas do mês vigente
+        s_ipca_daily = carregar_ipca_diario_com_mes_vigente_estimado(data_inicio, data_fim)
         if s_ipca_daily is None or s_ipca_daily.empty:
             load_warnings.append("BCB indisponível: não foi possível carregar IPCA. Exibindo apenas o ativo.")
             s_ipca_daily = pd.Series(dtype="float64")
-        elif ipca_estimado:
-            # ✅ texto mais amigável e objetivo
-            load_infos.append("IPCA do mês atual ainda não foi divulgado; completamos apenas este mês com uma estimativa (média 12m).")
 
     with st.spinner("Carregando Ibovespa (Yahoo)..."):
         s_ibov = carregar_ibov(data_inicio, data_fim)
@@ -707,7 +690,6 @@ if btn_analisar:
 
     st.session_state["analysis_ready"] = True
     st.session_state["load_warnings"] = load_warnings
-    st.session_state["load_infos"] = load_infos
     st.session_state["params"] = {
         "ticker": base,
         "aporte": float(valor_aporte),
@@ -716,7 +698,7 @@ if btn_analisar:
     }
     st.session_state["df_acao"] = df_acao
     st.session_state["s_rf"] = s_rf if s_rf is not None else pd.Series(dtype="float64")
-    st.session_state["nome_rf"] = nome_rf  # ✅ sempre "CDI"
+    st.session_state["nome_rf"] = nome_rf  # sempre "CDI"
     st.session_state["rf_proxy"] = bool(rf_proxy)
     st.session_state["s_ipca"] = s_ipca_daily
     st.session_state["s_ibov"] = s_ibov if s_ibov is not None else pd.Series(dtype="float64")
@@ -763,8 +745,6 @@ st.caption(
 
 for msg in st.session_state.get("load_warnings", []):
     st.warning(msg)
-for msg in st.session_state.get("load_infos", []):
-    st.info(msg)
 
 # Recorte do ativo na janela
 df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
@@ -959,16 +939,17 @@ for anos, col in zip(horizontes, cols):
         st.markdown(html_info, unsafe_allow_html=True)
 
 # -------------------------
-# GLOSSÁRIO (sem ícone de link)
+# GLOSSÁRIO (sem ícone de link) + CDI explicado antes
 # -------------------------
 rf_texto = (
-    "O app tenta usar o <b>CDI</b>. Se o CDI não estiver disponível na fonte, usamos a <b>Selic</b> como aproximação."
+    "O <b>CDI</b> é uma taxa de referência do mercado (muito usada como “renda fixa” no Brasil) e está aqui como <b>comparativo</b> de baixo risco. "
+    "O app tenta usar o <b>CDI</b> diretamente; se não estiver disponível na fonte, usamos a <b>Selic</b> como aproximação."
 )
 
 ipca_texto = (
     "Atualiza o valor investido para o poder de compra atual. "
-    "Quando o IPCA do <b>mês atual</b> ainda não estiver publicado pelo BCB, "
-    "o app completa <b>apenas esse mês</b> com uma estimativa baseada na <b>média dos últimos 12 meses</b>."
+    "Quando o IPCA do <b>mês vigente</b> ainda não estiver publicado pelo BCB, o app completa <b>apenas esse mês</b> "
+    "com uma estimativa baseada na <b>média dos últimos 12 meses</b>."
 )
 
 st.markdown(
