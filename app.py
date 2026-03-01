@@ -98,31 +98,33 @@ st.markdown(
         line-height: 1.5;
     }
 
-    /* ✅ Status do ticker (bem pequeno) */
+    /* ✅ Status do ticker (bem pequeno e “colado” no input) */
     .ticker-status {
-        font-size: 0.75rem;
-        padding: 6px 8px;
+        font-size: 0.74rem;
+        padding: 5px 8px;
         border-radius: 8px;
-        margin-top: 6px;
+        margin-top: -10px;     /* ✅ cola no campo */
+        margin-bottom: 8px;    /* respiro antes do próximo campo */
         border: 1px solid;
         line-height: 1.25;
-        color: #0f172a;            /* letra preta */
+        color: #0f172a;        /* letra preta */
     }
     .ticker-ok {
-        background: #dcfce7;       /* verde claro */
+        background: #dcfce7;   /* verde claro */
         border-color: #86efac;
     }
     .ticker-bad {
-        background: #fee2e2;       /* vermelho claro */
+        background: #fee2e2;   /* vermelho claro */
         border-color: #fca5a5;
     }
     .ticker-neutral {
         background: #f8fafc;
         border-color: #e2e8f0;
         color: #475569;
+        margin-top: -10px;
     }
 
-    /* ✅ Label do ticker com tooltip */
+    /* ✅ Label do ticker + tooltip instantâneo */
     .ticker-label-row{
         display:flex;
         align-items:center;
@@ -150,6 +152,35 @@ st.markdown(
         font-weight: 800;
         cursor: help;
         user-select:none;
+    }
+    .tooltip-wrap{
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+    }
+    .tooltip-text{
+        position: absolute;
+        left: 24px;
+        top: -6px;
+        min-width: 240px;
+        max-width: 280px;
+        background: #0f172a;
+        color: #ffffff;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 0.75rem;
+        line-height: 1.25;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(0px);
+        transition: opacity 0.05s linear;  /* ✅ praticamente instantâneo */
+        z-index: 9999;
+        pointer-events: none;
+    }
+    .tooltip-wrap:hover .tooltip-text{
+        opacity: 1;
+        visibility: visible;
     }
 </style>
 """,
@@ -243,10 +274,6 @@ def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
     return pd.Series(dtype="float64"), "Renda Fixa"
 
 def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
-    """
-    Extrapola o índice caso a série do BCB esteja atrasada em relação a dt_fim.
-    Utiliza a taxa geométrica diária baseada nos últimos 12 meses disponíveis.
-    """
     if s is None or s.empty:
         return s
 
@@ -487,7 +514,7 @@ def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timesta
     return (s_plot / float(base) - 1.0) * 100.0
 
 # =========================================================
-# ✅ UX: STATUS DO TICKER (BBAS3 vs BBAS3.SA + nome comercial)
+# ✅ UX: STATUS DO TICKER (nome comercial)
 # =========================================================
 
 def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
@@ -497,7 +524,6 @@ def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
     base = t[:-3] if t.endswith(".SA") else t
     return base, base + ".SA"
 
-# Apelidos para mostrar “nome comercial”
 TICKER_APELIDOS: dict[str, str] = {
     "BBAS3": "Banco do Brasil",
     "ITUB3": "Banco Itaú",
@@ -521,7 +547,6 @@ def _limpa_nome_yahoo(nome_raw: str) -> str:
     for suf in [" S.A.", " SA"]:
         n2 = n2.replace(suf, " ").strip()
     n2 = " ".join(n2.split())
-
     title = n2.lower().title()
     for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
         title = title.replace(w, w.lower())
@@ -536,10 +561,6 @@ def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
 
 @st.cache_data(ttl=60 * 10, show_spinner=False)
 def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
-    """
-    Retorna (ok, nome_raw) para exibir status abaixo do input.
-    Cache curto para não ficar consultando repetidamente.
-    """
     if not base:
         return False, ""
     _, t_sa = normaliza_ticker_usuario(base)
@@ -581,18 +602,21 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-# ✅ Label custom com tooltip "?"
+# ✅ Label custom com tooltip instantâneo
 st.sidebar.markdown(
     """
 <div class="ticker-label-row">
   <div class="ticker-label">Digite o Ticker</div>
-  <div class="ticker-help" title="Ticker é o código da ação na bolsa. Ex.: PETR4, VALE3, BBAS3. Você pode digitar com ou sem .SA.">?</div>
+  <div class="tooltip-wrap">
+    <div class="ticker-help">?</div>
+    <div class="tooltip-text">Ticker é o código da ação na bolsa. Ex.: PETR4, VALE3, BBAS3. Você pode digitar com ou sem <b>.SA</b>.</div>
+  </div>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-# ✅ Input sem label (para não duplicar o texto)
+# ✅ Input sem label
 ticker_input_raw = st.sidebar.text_input(
     label="",
     value="",
@@ -602,7 +626,7 @@ ticker_input_raw = st.sidebar.text_input(
 ticker_input_raw = (ticker_input_raw or "").upper().strip()
 base_ticker, _ = normaliza_ticker_usuario(ticker_input_raw)
 
-# ✅ Status pequeno abaixo do campo (atualiza ao digitar)
+# ✅ Status “colado” abaixo do input
 status_box = st.sidebar.empty()
 if base_ticker:
     if len(base_ticker) >= 4:
@@ -615,7 +639,7 @@ if base_ticker:
             )
         else:
             status_box.markdown(
-                '<div class="ticker-status ticker-bad">Ticker não encontrado. Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b>…</div>',
+                '<div class="ticker-status ticker-bad">Ticker não encontrado. Ex.: <b>PETR4</b>, <b>VALE3</b>…</div>',
                 unsafe_allow_html=True,
             )
     else:
@@ -629,7 +653,6 @@ else:
         unsafe_allow_html=True,
     )
 
-# ✅ Form mantém resto (aporte/datas/botão)
 with st.sidebar.form("form_simulador"):
     valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
@@ -659,7 +682,7 @@ Desenvolvido por: <br>
 # =========================================================
 
 if btn_analisar:
-    ticker_input = base_ticker  # ✅ usa sempre sem ".SA"
+    ticker_input = base_ticker  # usa sempre sem ".SA"
 
     if not ticker_input:
         st.error("Digite um ticker válido no menu lateral.")
