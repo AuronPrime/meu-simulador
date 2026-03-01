@@ -18,10 +18,6 @@ st.markdown(
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
 
-    /* ✅ Força tooltips acima de tudo (BaseWeb/Streamlit) */
-    div[data-baseweb="tooltip"] { z-index: 999999 !important; }
-    div[data-testid="stTooltipContent"] { z-index: 999999 !important; }
-
     /* ✅ Títulos custom (sem “ícone/link” do Streamlit) */
     .page-title{
         font-size: 2.25rem;
@@ -102,13 +98,13 @@ st.markdown(
         line-height: 1.5;
     }
 
-    /* ✅ Status do ticker (bem pequeno e colado no input) */
+    /* ✅ Status do ticker (bem pequeno e “colado” no input) */
     .ticker-status {
         font-size: 0.74rem;
         padding: 5px 8px;
         border-radius: 8px;
-        margin-top: -12px;     /* cola no campo */
-        margin-bottom: 10px;   /* respiro antes do próximo campo */
+        margin-top: -10px;     /* ✅ cola no campo */
+        margin-bottom: 8px;    /* respiro antes do próximo campo */
         border: 1px solid;
         line-height: 1.25;
         color: #0f172a;        /* letra preta */
@@ -125,6 +121,66 @@ st.markdown(
         background: #f8fafc;
         border-color: #e2e8f0;
         color: #475569;
+        margin-top: -10px;
+    }
+
+    /* ✅ Label do ticker + tooltip instantâneo */
+    .ticker-label-row{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        margin: 6px 0 4px 0;
+    }
+    .ticker-label{
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #0f172a;
+        margin: 0;
+        padding: 0;
+    }
+    .ticker-help{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:18px;
+        height:18px;
+        border-radius:999px;
+        border:1px solid #cbd5e1;
+        color:#0f172a;
+        background:#ffffff;
+        font-size: 0.8rem;
+        font-weight: 800;
+        cursor: help;
+        user-select:none;
+    }
+    .tooltip-wrap{
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+    }
+    .tooltip-text{
+        position: absolute;
+        left: 24px;
+        top: -6px;
+        min-width: 240px;
+        max-width: 280px;
+        background: #0f172a;
+        color: #ffffff;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 0.75rem;
+        line-height: 1.25;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(0px);
+        transition: opacity 0.05s linear;  /* ✅ praticamente instantâneo */
+        z-index: 9999;
+        pointer-events: none;
+    }
+    .tooltip-wrap:hover .tooltip-text{
+        opacity: 1;
+        visibility: visible;
     }
 </style>
 """,
@@ -546,17 +602,31 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-# ✅ Tooltip do Streamlit (fica acima de tudo e não sofre corte do sidebar)
+# ✅ Label custom com tooltip instantâneo
+st.sidebar.markdown(
+    """
+<div class="ticker-label-row">
+  <div class="ticker-label">Digite o Ticker</div>
+  <div class="tooltip-wrap">
+    <div class="ticker-help">?</div>
+    <div class="tooltip-text">Ticker é o código da ação na bolsa. Ex.: PETR4, VALE3, BBAS3. Você pode digitar com ou sem <b>.SA</b>.</div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+# ✅ Input sem label
 ticker_input_raw = st.sidebar.text_input(
-    "Digite o Ticker",
+    label="",
     value="",
     key="ticker_input",
-    help="Ticker é o código da ação na bolsa. Ex.: PETR4, VALE3, BBAS3. Você pode digitar com ou sem .SA.",
+    label_visibility="collapsed",
 )
 ticker_input_raw = (ticker_input_raw or "").upper().strip()
 base_ticker, _ = normaliza_ticker_usuario(ticker_input_raw)
 
-# ✅ Status bem pequeno “colado” abaixo do input
+# ✅ Status “colado” abaixo do input
 status_box = st.sidebar.empty()
 if base_ticker:
     if len(base_ticker) >= 4:
@@ -762,4 +832,165 @@ fig.add_trace(
     )
 )
 fig.add_trace(
-   
+    go.Scatter(
+        x=df_v.index,
+        y=(df_v["Total_Fact_Chart"] - 1) * 100,
+        name="RETORNO TOTAL",
+        line=dict(color="black", width=3),
+    )
+)
+
+fig.update_layout(
+    template="plotly_white",
+    hovermode="x unified",
+    yaxis=dict(side="right", ticksuffix="%", tickformat=".0f"),
+    margin=dict(l=10, r=10, t=40, b=10),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+)
+fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
+
+st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------
+# “Simulação de Patrimônio Acumulado” (sem hyperlink/âncora)
+# -------------------------
+st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
+
+horizontes = [10, 5, 1]
+cols = st.columns(3)
+
+dt_ini_eff = proximo_pregao_a_partir(df_acao.index, dt_ini_user)
+if dt_ini_eff is None:
+    st.error("Não foi possível determinar o primeiro pregão disponível para o ativo.")
+    st.stop()
+
+for anos, col in zip(horizontes, cols):
+    with col:
+        titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
+        dt_target = dt_ini_eff + pd.DateOffset(years=anos)
+
+        if dt_target > dt_fim_user:
+            st.markdown(
+                f"""
+            <div class="total-card">
+                <div class="total-label">{titulo_col}</div>
+                <div class="total-amount">—</div>
+            </div>
+            <div class="info-card" style="border-top: 1px solid #e2e8f0;">
+                <div class="card-header">Período insuficiente</div>
+                <div class="card-item">
+                    Para calcular <b>{anos} anos</b>, aumente a data final para <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+            continue
+
+        res = calcular_horizonte(
+            df_full=df_acao,
+            valor_mensal=float(valor_aporte_exec),
+            dt_inicio_user=dt_ini_user,
+            dt_ref_target=dt_target,
+            s_rf=s_rf if mostrar_rf else pd.Series(dtype="float64"),
+            s_ipca=s_ipca if mostrar_ipca else pd.Series(dtype="float64"),
+            s_ibov=s_ibov if mostrar_ibov else pd.Series(dtype="float64"),
+        )
+
+        if res is None:
+            st.markdown(
+                f"""
+            <div class="total-card">
+                <div class="total-label">{titulo_col}</div>
+                <div class="total-amount">—</div>
+            </div>
+            <div class="info-card" style="border-top: 1px solid #e2e8f0;">
+                <div class="card-header">Aviso</div>
+                <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+            continue
+
+        vf = res["vf"]
+        vi = res["vi"]
+        lucro = res["lucro"]
+        v_rf = res["v_rf"]
+        v_ipca = res["v_ipca"]
+        v_ibov = res["v_ibov"]
+
+        rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0
+        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"
+        emoji_rendimento = "📈"
+
+        bench_lines = []
+        if mostrar_rf and v_rf is not None:
+            bench_lines.append(f'<div class="card-item">🎯 <b>{nome_rf}:</b> {formata_br(v_rf)}</div>')
+        if mostrar_ibov and v_ibov is not None:
+            bench_lines.append(f'<div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>')
+        if mostrar_ipca and v_ipca is not None:
+            bench_lines.append(f'<div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>')
+        if not bench_lines:
+            bench_lines.append('<div class="card-item">—</div>')
+
+        inicio_eff_str = res["dt_inicio_eff"].date().strftime("%d/%m/%Y")
+        data_ref_str = res["data_ref"].date().strftime("%d/%m/%Y")
+
+        st.markdown(
+            f"""
+        <div class="total-card">
+            <div class="total-label">{titulo_col}</div>
+            <div class="total-amount">{formata_br(vf)}</div>
+        </div>
+        <div class="info-card">
+            <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
+            <div class="card-item" style="font-size: 1.00rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">
+                {emoji_rendimento} <b>Rendimento Nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)
+            </div>
+            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+            <div class="card-header">Benchmarks (Valor Corrigido)</div>
+            {''.join(bench_lines)}
+            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+            <div class="card-header">Detalhes</div>
+            <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>
+            <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str}</div>
+            <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+# -------------------------
+# GUIA
+# -------------------------
+st.markdown(
+    """
+<div class="glossario-container">
+  <div class="glossario-title">Guia de Termos e Indicadores</div>
+
+  <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
+  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores do mês atual ou faltantes são projetados com base na média dos últimos 12 meses.</span>
+
+  <span class="glossario-termo">• Correção IPCA (Inflação)</span>
+  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes de publicação pelo IBGE são estimadas usando a inflação média histórica do último ano.</span>
+
+  <span class="glossario-termo">• Ibovespa</span>
+  <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
+
+  <span class="glossario-termo">• Capital Nominal Investido</span>
+  <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
+
+  <span class="glossario-termo">• Lucro Acumulado</span>
+  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
+
+  <span class="glossario-termo">• Retorno Total</span>
+  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+
+  <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
+    <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+  </p>
+</div>
+""",
+    unsafe_allow_html=True,
+)
