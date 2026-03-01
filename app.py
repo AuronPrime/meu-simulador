@@ -7,7 +7,6 @@ import plotly.graph_objects as go
 from datetime import date, timedelta
 import time
 import calendar
-from concurrent.futures import ThreadPoolExecutor
 
 # =========================================================
 # 1) CONFIGURAÇÃO DA PÁGINA
@@ -17,88 +16,68 @@ st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 st.markdown(
     """
 <style>
-    [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
+[data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
 
-    .resumo-objetivo {
-        font-size: 0.95rem;
-        color: #333;
-        background-color: #e8f0fe;
-        padding: 18px;
-        border-radius: 10px;
-        margin-bottom: 15px;
-        border-left: 5px solid #1f77b4;
-        line-height: 1.6;
-    }
+.resumo-objetivo {
+    font-size: 0.95rem;
+    color: #333;
+    background-color: #e8f0fe;
+    padding: 18px;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    border-left: 5px solid #1f77b4;
+    line-height: 1.6;
+}
 
-    .instrucoes {
-        font-size: 0.9rem;
-        color: #0f172a;
-        background-color: #f8fafc;
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 12px;
-        border: 1px solid #e2e8f0;
-        line-height: 1.55;
-    }
-    .instrucoes b { color: #1f77b4; }
-    .instrucoes .obs { color: #475569; font-size: 0.85rem; margin-top: 8px; }
+.instrucoes {
+    font-size: 0.9rem;
+    color: #0f172a;
+    background-color: #f8fafc;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    border: 1px solid #e2e8f0;
+    line-height: 1.55;
+}
+.instrucoes b { color: #1f77b4; }
+.instrucoes .obs { color: #475569; font-size: 0.85rem; margin-top: 8px; }
 
-    .total-card {
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
-        padding: 15px;
-        border-radius: 12px;
-        margin-bottom: 10px;
-        text-align: center;
-    }
-    .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
-    .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
+.total-card {
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 15px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+.total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
+.total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
-    .total-sub-muted { font-size: 0.88rem; color: #64748b; margin-top: 4px; }
-    .total-sub-profit { font-size: 0.95rem; font-weight: 800; color: #0f172a; margin-top: 6px; }
-    .small-muted { font-size: 0.78rem; color: #64748b; }
+/* ✅ Hierarquia */
+.total-sub-muted { font-size: 0.88rem; color: #64748b; margin-top: 4px; }
+.total-sub-profit { font-size: 0.95rem; font-weight: 800; color: #0f172a; margin-top: 6px; }
+.small-muted { font-size: 0.78rem; color: #64748b; }
 
-    .info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
-    .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
-    .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
-    .card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+.info-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin-top: 5px; }
+.card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
+.card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
+.card-destaque { font-size: 0.95rem; font-weight: 700; color: #0f172a; margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
 
-    .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
-    .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
-    .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
+.glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
+.glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
+.glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
 
-    .warn-box {
-        background: #fff7ed;
-        border: 1px solid #fed7aa;
-        border-left: 5px solid #fb923c;
-        padding: 12px 14px;
-        border-radius: 10px;
-        color: #7c2d12;
-        margin: 10px 0 0 0;
-        font-size: 0.9rem;
-        line-height: 1.5;
-    }
-
-    .ticker-status {
-        font-size: 0.78rem;
-        padding: 6px 8px;
-        border-radius: 8px;
-        margin-top: 6px;
-        border: 1px solid;
-        line-height: 1.25;
-        opacity: 0.95;
-    }
-    .ticker-ok { background: #ecfdf5; color: #065f46; border-color: #a7f3d0; }
-    .ticker-bad { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
-    .ticker-neutral { background: #f8fafc; color: #475569; border-color: #e2e8f0; }
-
-    .glossario-title {
-        font-size: 1.45rem;
-        font-weight: 800;
-        color: #1f77b4;
-        margin: 0 0 10px 0;
-        padding: 0;
-    }
+.warn-box {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-left: 5px solid #fb923c;
+    padding: 12px 14px;
+    border-radius: 10px;
+    color: #7c2d12;
+    margin: 10px 0 0 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -113,7 +92,7 @@ st.title("Simulador de Acúmulo de Patrimônio")
 # 2) FUNÇÕES DE SUPORTE
 # =========================================================
 
-def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 15) -> pd.DataFrame:
+def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30) -> pd.DataFrame:
     s, e = d_inicio.strftime("%d/%m/%Y"), d_fim.strftime("%d/%m/%Y")
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados"
     params = {"formato": "json", "dataInicial": s, "dataFinal": e}
@@ -128,11 +107,8 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 15)
         return pd.DataFrame(columns=["data", "valor"])
     return df
 
-@st.cache_data(ttl=60 * 60 * 12, show_spinner=False)
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
-    """
-    Retorna série CUMULATIVA (cumprod) a partir da taxa do SGS.
-    """
     if d_inicio is None or d_fim is None or d_inicio > d_fim:
         return pd.Series(dtype="float64")
 
@@ -141,23 +117,21 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
 
     partes = []
     cur = start
-
-    # janela maior para reduzir chamadas
     while cur <= end:
-        chunk_end = min(end, (cur + pd.DateOffset(years=20)) - pd.Timedelta(days=1))
+        chunk_end = min(end, (cur + pd.DateOffset(years=10)) - pd.Timedelta(days=1))
         d1 = cur.date()
         d2 = chunk_end.date()
 
         ok = False
-        for i in range(3):  # ✅ menos tentativas para ganhar velocidade
+        for i in range(5):
             try:
-                df = _fetch_bcb_json(codigo, d1, d2, timeout=15)
+                df = _fetch_bcb_json(codigo, d1, d2, timeout=30)
                 if not df.empty:
                     partes.append(df)
                 ok = True
                 break
             except Exception:
-                time.sleep(0.5 * (i + 1))
+                time.sleep(i + 1)
 
         if not ok:
             return pd.Series(dtype="float64")
@@ -183,23 +157,17 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     s = s[~s.index.duplicated(keep="last")]
     return (1.0 + s).cumprod()
 
-@st.cache_data(ttl=60 * 60 * 12, show_spinner=False)
-def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str, bool]:
-    """
-    UX: sempre exibimos como "CDI".
-    - tenta CDI (SGS 12)
-    - se falhar, usa Selic (SGS 11) como proxy
-    Retorna (serie, "CDI", usou_selic_proxy)
-    """
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
     s_cdi = busca_indice_bcb(12, d_inicio, d_fim)
     if s_cdi is not None and not s_cdi.empty:
-        return s_cdi, "CDI", False
+        return s_cdi, "CDI"
 
     s_selic = busca_indice_bcb(11, d_inicio, d_fim)
     if s_selic is not None and not s_selic.empty:
-        return s_selic, "CDI", True
+        return s_selic, "Selic (proxy CDI)"
 
-    return pd.Series(dtype="float64"), "CDI", False
+    return pd.Series(dtype="float64"), "Renda Fixa"
 
 def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
     close = df["Close"].astype(float)
@@ -299,7 +267,8 @@ def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fi
     1 aporte por mês ancorado no dia do mês do início.
     - Se mês não tiver o dia (29/30/31), usa último dia do mês.
     - Se cair em dia sem pregão, executa no próximo pregão.
-    - dt_fim_exclusivo é fim EXCLUSIVO (data de avaliação)
+    - dt_fim_exclusivo é fim EXCLUSIVO (data de avaliação), garantindo:
+      1 ano => 12 aportes, 5 anos => 60, 10 anos => 120.
     """
     if len(df_index) == 0:
         return pd.DatetimeIndex([])
@@ -428,114 +397,8 @@ def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timesta
 
     return (s_plot / float(base) - 1.0) * 100.0
 
-def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
-    t = (t or "").upper().strip()
-    if not t:
-        return "", ""
-    if t.endswith(".SA"):
-        base = t[:-3]
-    else:
-        base = t
-    return base, base + ".SA"
-
-# Apelidos “comerciais”
-TICKER_APELIDOS: dict[str, str] = {
-    "BBAS3": "Banco do Brasil",
-    "ITUB3": "Banco Itaú",
-    "ITUB4": "Banco Itaú",
-    "BBDC3": "Banco Bradesco",
-    "BBDC4": "Banco Bradesco",
-    "SANB3": "Banco Santander",
-    "SANB4": "Banco Santander",
-    "PETR3": "Petrobras",
-    "PETR4": "Petrobras",
-    "VALE3": "Vale",
-}
-
-def _limpa_nome_yahoo(nome_raw: str) -> str:
-    if not nome_raw:
-        return ""
-    n = " ".join(str(nome_raw).strip().split())
-    remove_tokens = {"ON", "PN", "PNA", "PNB", "PNC", "UNT", "UNIT", "NM", "N1", "N2", "MA", "MB"}
-    parts = [p for p in n.replace("/", " ").split() if p.upper() not in remove_tokens]
-    n2 = " ".join(parts).strip()
-    for suf in [" S.A.", " SA"]:
-        n2 = n2.replace(suf, " ").strip()
-    n2 = " ".join(n2.split())
-    low = n2.lower()
-    title = low.title()
-    for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
-        title = title.replace(w, w.lower())
-    return title.strip()
-
-def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
-    base = (base or "").upper().strip()
-    if base in TICKER_APELIDOS:
-        return TICKER_APELIDOS[base]
-    cleaned = _limpa_nome_yahoo(nome_yahoo)
-    return cleaned if cleaned else base
-
-@st.cache_data(ttl=60 * 10, show_spinner=False)
-def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
-    if not base:
-        return False, ""
-    _, t_sa = normaliza_ticker_usuario(base)
-    try:
-        tk = yf.Ticker(t_sa)
-        h = tk.history(period="5d", auto_adjust=False)
-        if h is None or h.empty:
-            return False, ""
-        nome = ""
-        try:
-            info = tk.info or {}
-            nome = info.get("shortName") or info.get("longName") or ""
-        except Exception:
-            nome = ""
-        return True, nome
-    except Exception:
-        return False, ""
-
-# -------------------------
-# IPCA: oficial até mês anterior + mês atual = réplica do mês passado (carry-forward)
-# -------------------------
-@st.cache_data(ttl=60 * 60 * 12, show_spinner=False)
-def carregar_ipca_diario_hold_mes_atual(d_inicio: date, d_fim: date) -> pd.Series:
-    """
-    - Busca IPCA (SGS 433) em janela maior (para não ficar vazio em datas recentes).
-    - Usa o histórico oficial disponível.
-    - Para o mês vigente (onde normalmente ainda não há publicação), "replica" o mês anterior:
-      na prática, mantém o último nível oficial (carry-forward) durante o mês atual.
-    - Retorna série DIÁRIA de fatores cumulativos (para correção via end/at).
-    """
-    start_dt = pd.Timestamp(d_inicio).normalize()
-    end_dt = pd.Timestamp(d_fim).normalize()
-
-    # janela fixa para garantir que sempre pegue pelo menos o último ponto oficial
-    start_busca = (end_dt - pd.DateOffset(months=60)).date()  # 5 anos costuma ser mais que suficiente
-    s_raw = busca_indice_bcb(433, start_busca, d_fim)
-
-    if s_raw is None or s_raw.empty:
-        # fallback maior
-        start_busca2 = (end_dt - pd.DateOffset(years=15)).date()
-        s_raw = busca_indice_bcb(433, start_busca2, d_fim)
-
-    if s_raw is None or s_raw.empty:
-        return pd.Series(dtype="float64")
-
-    s_raw = pd.Series(s_raw).dropna().sort_index()
-    if s_raw.empty:
-        return pd.Series(dtype="float64")
-
-    # densifica diário; o "hold" do mês atual acontece naturalmente com ffill
-    full_days = pd.date_range(pd.Timestamp(start_busca).normalize(), end_dt, freq="D")
-    s_daily_all = s_raw.reindex(full_days, method="ffill").bfill()
-
-    user_days = pd.date_range(start_dt, end_dt, freq="D")
-    s_user = s_daily_all.reindex(user_days, method="ffill").bfill()
-    return s_user.astype(float)
-
 # =========================================================
-# 3) BARRA LATERAL + STATUS DE TICKER
+# 3) BARRA LATERAL (FORM + INSTRUÇÕES)
 # =========================================================
 
 st.sidebar.markdown(
@@ -553,49 +416,23 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+# Defaults:
 hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-ticker_input = st.sidebar.text_input("Digite o Ticker", "", key="ticker_input").upper().strip()
+with st.sidebar.form("form_simulador"):
+    ticker_input = st.text_input("Digite o Ticker", "").upper().strip()
+    valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
-ticker_box = st.sidebar.empty()
-if ticker_input:
-    base, _ = normaliza_ticker_usuario(ticker_input)
-    if len(base) >= 4:
-        ok, nome_raw = validar_ticker_yahoo(base)
-        if ok:
-            nome_show = nome_comercial_para_ticker(base, nome_raw)
-            ticker_box.markdown(
-                f'<div class="ticker-status ticker-ok">Encontrado: <b>{nome_show}</b> ({base})</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            ticker_box.markdown(
-                '<div class="ticker-status ticker-bad">Ticker não encontrado. Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b>…</div>',
-                unsafe_allow_html=True,
-            )
-    else:
-        ticker_box.markdown(
-            '<div class="ticker-status ticker-neutral">Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
-            unsafe_allow_html=True,
-        )
-else:
-    ticker_box.markdown(
-        '<div class="ticker-status ticker-neutral">Exemplos: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
-        unsafe_allow_html=True,
-    )
+    st.subheader("Período da Simulação")
+    data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
+    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
 
-valor_aporte = st.sidebar.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
-
-st.sidebar.subheader("Período da Simulação")
-data_inicio = st.sidebar.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
-data_fim = st.sidebar.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
-
-btn_analisar = st.sidebar.button("🔍 Analisar Patrimônio")
+    btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
 
 st.sidebar.subheader("Benchmarks")
-mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI)", value=True, key="mostrar_rf")
+mostrar_rf = st.sidebar.checkbox("Renda Fixa (CDI/Selic)", value=True, key="mostrar_rf")
 mostrar_ipca = st.sidebar.checkbox("IPCA (Inflação)", value=True, key="mostrar_ipca")
 mostrar_ibov = st.sidebar.checkbox("Ibovespa (Mercado)", value=True, key="mostrar_ibov")
 
@@ -622,58 +459,80 @@ if btn_analisar:
         st.error("A data de **Início** deve ser anterior à data de **Fim**.")
         st.stop()
 
-    base, _ = normaliza_ticker_usuario(ticker_input)
-    load_warnings: list[str] = []
+    # ✅ Spinner com etapas (sem ícones) + fallback (benchmarks opcionais)
+    load_warnings = []
+    use_status = hasattr(st, "status")
+    status = st.status("Iniciando carregamento...", expanded=False) if use_status else None
+    placeholder = st.empty() if not use_status else None
 
-    with st.spinner("Carregando ativo (Yahoo Finance)..."):
-        df_acao = carregar_dados_completos(base)
+    try:
+        if status:
+            status.update(label="Carregando ativo (Yahoo Finance)...", state="running")
+        else:
+            placeholder.info("Carregando ativo (Yahoo Finance)...")
 
-    if df_acao is None or df_acao.empty:
-        st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
-        st.stop()
+        df_acao = carregar_dados_completos(ticker_input)
+        if df_acao is None or df_acao.empty:
+            if status:
+                status.update(label="Falha ao carregar o ativo.", state="error")
+            else:
+                placeholder.empty()
+            st.error("Ticker não encontrado ou sem dados suficientes (Yahoo Finance).")
+            st.stop()
 
-    # ✅ Mais rápido: CDI e IPCA em paralelo (mesma etapa BCB/SGS)
-    with st.spinner("Carregando CDI / IPCA (BCB/SGS)..."):
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            fut_rf = ex.submit(carregar_renda_fixa, data_inicio, data_fim)
-            fut_ipca = ex.submit(carregar_ipca_diario_hold_mes_atual, data_inicio, data_fim)
+        if status:
+            status.update(label="Carregando CDI / IPCA (BCB/SGS)...", state="running")
+        else:
+            placeholder.info("Carregando CDI / IPCA (BCB/SGS)...")
 
-            s_rf, nome_rf, rf_proxy = fut_rf.result()
-            s_ipca_daily = fut_ipca.result()
-
+        s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
         if s_rf is None or s_rf.empty:
-            load_warnings.append("BCB indisponível: não foi possível carregar CDI (ou Selic). Exibindo apenas o ativo.")
-            s_rf = pd.Series(dtype="float64")
-            nome_rf = "CDI"
-            rf_proxy = False
+            load_warnings.append("BCB indisponível: não foi possível carregar CDI/Selic. Exibindo apenas o ativo.")
 
-        if s_ipca_daily is None or s_ipca_daily.empty:
+        s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
+        if s_ipca is None or s_ipca.empty:
             load_warnings.append("BCB indisponível: não foi possível carregar IPCA. Exibindo apenas o ativo.")
-            s_ipca_daily = pd.Series(dtype="float64")
 
-    with st.spinner("Carregando Ibovespa (Yahoo)..."):
+        if status:
+            status.update(label="Carregando Ibovespa (Yahoo)...", state="running")
+        else:
+            placeholder.info("Carregando Ibovespa (Yahoo)...")
+
         s_ibov = carregar_ibov(data_inicio, data_fim)
         if s_ibov is None or s_ibov.empty:
             load_warnings.append("Yahoo indisponível: não foi possível carregar o Ibovespa. Exibindo apenas o ativo.")
-            s_ibov = pd.Series(dtype="float64")
 
-    with st.spinner("Montando simulação..."):
-        pass
+        if status:
+            status.update(label="Montando simulação...", state="running")
+        else:
+            placeholder.info("Montando simulação...")
+
+    except Exception as e:
+        if status:
+            status.update(label="Erro inesperado no carregamento.", state="error")
+        else:
+            placeholder.empty()
+        st.error(f"Erro ao carregar dados: {e}")
+        st.stop()
+
+    if status:
+        status.update(label="Pronto! Dados carregados.", state="complete")
+    else:
+        placeholder.empty()
 
     st.session_state["analysis_ready"] = True
     st.session_state["load_warnings"] = load_warnings
     st.session_state["params"] = {
-        "ticker": base,
+        "ticker": ticker_input,
         "aporte": float(valor_aporte),
         "data_inicio": data_inicio,
         "data_fim": data_fim,
     }
     st.session_state["df_acao"] = df_acao
-    st.session_state["s_rf"] = s_rf
-    st.session_state["nome_rf"] = "CDI"  # sempre amigável
-    st.session_state["rf_proxy"] = bool(rf_proxy)
-    st.session_state["s_ipca"] = s_ipca_daily
-    st.session_state["s_ibov"] = s_ibov
+    st.session_state["s_rf"] = s_rf if s_rf is not None else pd.Series(dtype="float64")
+    st.session_state["nome_rf"] = nome_rf if nome_rf else "Renda Fixa"
+    st.session_state["s_ipca"] = s_ipca if s_ipca is not None else pd.Series(dtype="float64")
+    st.session_state["s_ibov"] = s_ibov if s_ibov is not None else pd.Series(dtype="float64")
 
 if not st.session_state.get("analysis_ready", False):
     st.markdown(
@@ -703,8 +562,7 @@ data_fim_exec = params["data_fim"]
 
 df_acao = st.session_state["df_acao"]
 s_rf = st.session_state.get("s_rf", pd.Series(dtype="float64"))
-nome_rf = st.session_state.get("nome_rf", "CDI")
-rf_proxy = st.session_state.get("rf_proxy", False)
+nome_rf = st.session_state.get("nome_rf", "Renda Fixa")
 s_ipca = st.session_state.get("s_ipca", pd.Series(dtype="float64"))
 s_ibov = st.session_state.get("s_ibov", pd.Series(dtype="float64"))
 
@@ -910,46 +768,32 @@ for anos, col in zip(horizontes, cols):
         )
         st.markdown(html_info, unsafe_allow_html=True)
 
-# -------------------------
-# GLOSSÁRIO
-# -------------------------
-rf_texto = (
-    "O <b>CDI</b> é uma taxa de referência do mercado (muito usada como “renda fixa” no Brasil) e está aqui como <b>comparativo</b> de baixo risco. "
-    "O app tenta usar o <b>CDI</b>; quando ele não estiver disponível na fonte, usamos a <b>Selic</b> como aproximação."
-)
-
-ipca_texto = (
-    "Atualiza o valor investido para o poder de compra atual. "
-    "Como o IPCA do <b>mês atual</b> pode não estar publicado ainda, o app mantém (replica) o último valor oficial disponível "
-    "durante o mês vigente, até que o dado real seja divulgado."
-)
-
 st.markdown(
-    f"""
+    """
 <div class="glossario-container">
-  <div class="glossario-title">Guia de Termos e Indicadores</div>
+<h3 style="color: #1f77b4; margin-top:0;">Guia de Termos e Indicadores</h3>
 
-  <span class="glossario-termo">• Renda Fixa (CDI)</span>
-  <span class="glossario-def">{rf_texto}</span>
+<span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
+<span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy.</span>
 
-  <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-  <span class="glossario-def">{ipca_texto}</span>
+<span class="glossario-termo">• Correção IPCA (Inflação)</span>
+<span class="glossario-def">Atualiza o valor investido para o poder de compra atual.</span>
 
-  <span class="glossario-termo">• Ibovespa</span>
-  <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
+<span class="glossario-termo">• Ibovespa</span>
+<span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
 
-  <span class="glossario-termo">• Capital Nominal Investido</span>
-  <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
+<span class="glossario-termo">• Capital Nominal Investido</span>
+<span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
 
-  <span class="glossario-termo">• Lucro Acumulado</span>
-  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
+<span class="glossario-termo">• Lucro Acumulado</span>
+<span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
 
-  <span class="glossario-termo">• Retorno Total</span>
-  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+<span class="glossario-termo">• Retorno Total</span>
+<span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
 
-  <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
-    <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
-  </p>
+<p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
+<b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+</p>
 </div>
 """,
     unsafe_allow_html=True,
