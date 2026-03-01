@@ -79,19 +79,20 @@ st.markdown(
         line-height: 1.5;
     }
 
-    /* ✅ Status do ticker (verde/vermelho) */
+    /* ✅ Status do ticker (menor e discreto) */
     .ticker-status {
-        font-size: 0.85rem;
-        padding: 10px 12px;
-        border-radius: 10px;
-        margin-top: 8px;
+        font-size: 0.78rem;
+        padding: 6px 8px;
+        border-radius: 8px;
+        margin-top: 6px;
         border: 1px solid;
-        line-height: 1.35;
+        line-height: 1.25;
+        opacity: 0.95;
     }
     .ticker-ok {
         background: #ecfdf5;
         color: #065f46;
-        border-color: #6ee7b7;
+        border-color: #a7f3d0;
     }
     .ticker-bad {
         background: #fef2f2;
@@ -432,11 +433,53 @@ def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
         base = t
     return base, base + ".SA"
 
+# ✅ Apelidos (nome “comercial”) para os mais comuns
+TICKER_APELIDOS: dict[str, str] = {
+    "BBAS3": "Banco do Brasil",
+    "ITUB3": "Banco Itaú",
+    "ITUB4": "Banco Itaú",
+    "BBDC3": "Banco Bradesco",
+    "BBDC4": "Banco Bradesco",
+    "SANB3": "Banco Santander",
+    "SANB4": "Banco Santander",
+    "PETR3": "Petrobras",
+    "PETR4": "Petrobras",
+    "VALE3": "Vale",
+}
+
+def _limpa_nome_yahoo(nome_raw: str) -> str:
+    if not nome_raw:
+        return ""
+    n = " ".join(str(nome_raw).strip().split())
+    # remove tokens comuns de classe/segmento
+    remove_tokens = {"ON", "PN", "PNA", "PNB", "PNC", "UNT", "UNIT", "NM", "N1", "N2", "MA", "MB"}
+    parts = [p for p in n.replace("/", " ").split() if p.upper() not in remove_tokens]
+    n2 = " ".join(parts).strip()
+
+    # remove sufixos muito comuns
+    for suf in [" S.A.", " SA", " -", "-"]:
+        n2 = n2.replace(suf, " ").strip()
+    n2 = " ".join(n2.split())
+
+    # título mais “humano”
+    low = n2.lower()
+    title = low.title()
+    # conectivos em pt
+    for w in [" Da ", " De ", " Do ", " Das ", " Dos ", " E "]:
+        title = title.replace(w, w.lower())
+    return title.strip()
+
+def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
+    base = (base or "").upper().strip()
+    if base in TICKER_APELIDOS:
+        return TICKER_APELIDOS[base]
+    cleaned = _limpa_nome_yahoo(nome_yahoo)
+    return cleaned if cleaned else base
+
 @st.cache_data(ttl=60 * 10, show_spinner=False)
 def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
     """
-    Retorna (ok, nome). Nome pode vir vazio em alguns ativos.
-    Cache curto para não ficar consultando toda hora.
+    Retorna (ok, nome_raw). Cache curto para não consultar toda hora.
     """
     if not base:
         return False, ""
@@ -458,9 +501,10 @@ def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
 
 def ipca_diario_com_estimativa_12m(s_ipca_cum: pd.Series, d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
     """
-    - Se IPCA oficial não chegou até d_fim, estende com IPCA estimado:
-      média dos últimos 12 meses (taxa mensal média), convertida para taxa diária aproximada.
-    - Retorna série diária (D) preenchida, e nome para exibir.
+    - Recebe série CUMULATIVA (cumprod) do IPCA mensal.
+    - Densifica para DIÁRIO.
+    - Se o IPCA oficial não chegou até d_fim, estende com IPCA estimado:
+      média dos últimos 12 meses (taxa mensal média), convertida para fator diário aproximado.
     """
     nome = "IPCA"
     if s_ipca_cum is None or s_ipca_cum.empty:
@@ -474,13 +518,12 @@ def ipca_diario_com_estimativa_12m(s_ipca_cum: pd.Series, d_inicio: date, d_fim:
     start_dt = pd.Timestamp(d_inicio).normalize()
     last_dt = pd.Timestamp(s.index.max()).normalize()
 
-    # Se faltar IPCA no(s) mês(es) mais recente(s), estimar via média 12m
+    # Se faltar IPCA (publicação atrasada), estimar via média 12m
     if end_dt > last_dt:
         factors = (s / s.shift(1)).dropna()
         rates = (factors - 1.0).dropna()
         if not rates.empty:
             avg_m = float(rates.tail(12).mean())
-            # taxa diária aproximada a partir de taxa mensal média
             daily_factor = (1.0 + avg_m) ** (1.0 / 30.4375)
 
             days = pd.date_range(last_dt + pd.Timedelta(days=1), end_dt, freq="D")
@@ -492,15 +535,39 @@ def ipca_diario_com_estimativa_12m(s_ipca_cum: pd.Series, d_inicio: date, d_fim:
                 s = pd.concat([s, s_est])
                 nome = "IPCA (estimado 12m)"
 
-    # densifica para diário no intervalo solicitado
+    # Densifica para diário no intervalo solicitado
     full_days = pd.date_range(start_dt, end_dt, freq="D")
     s_daily = pd.Series(s).sort_index().reindex(full_days, method="ffill")
-    # se o usuário escolher período muito antigo e faltar começo, preencher para trás
     s_daily = s_daily.fillna(method="bfill")
     return s_daily.astype(float), nome
 
+def carregar_ipca_com_estimativa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str, bool]:
+    """
+    ✅ Corrige o caso em que o usuário escolhe um intervalo recente (ex.: mês atual)
+    e o BCB não retorna nenhum ponto dentro do range.
+    Estratégia:
+    - Buscar IPCA em uma janela maior (36 meses até d_fim),
+      para sempre ter histórico suficiente.
+    - Densificar para diário e estimar se necessário.
+    """
+    end_dt = pd.Timestamp(d_fim).normalize()
+    start_busca = (end_dt - pd.DateOffset(months=36)).date()
+
+    s_raw = busca_indice_bcb(433, start_busca, d_fim)
+    if s_raw is None or s_raw.empty:
+        # fallback mais amplo
+        start_busca2 = (end_dt - pd.DateOffset(years=10)).date()
+        s_raw = busca_indice_bcb(433, start_busca2, d_fim)
+
+    if s_raw is None or s_raw.empty:
+        return pd.Series(dtype="float64"), "IPCA", False
+
+    s_daily, nome = ipca_diario_com_estimativa_12m(s_raw, d_inicio, d_fim)
+    estimado = "estimado" in (nome or "").lower()
+    return s_daily, nome, estimado
+
 # =========================================================
-# 3) BARRA LATERAL (SEM FORM) + STATUS DE TICKER
+# 3) BARRA LATERAL + STATUS DE TICKER
 # =========================================================
 
 st.sidebar.markdown(
@@ -524,15 +591,13 @@ d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timede
 
 ticker_input = st.sidebar.text_input("Digite o Ticker", "", key="ticker_input").upper().strip()
 
-# ✅ status do ticker enquanto digita (sem precisar clicar em analisar)
 ticker_box = st.sidebar.empty()
 if ticker_input:
     base, _ = normaliza_ticker_usuario(ticker_input)
-    # valida só a partir de 4 chars (evita chamadas cedo demais)
     if len(base) >= 4:
-        ok, nome = validar_ticker_yahoo(base)
+        ok, nome_raw = validar_ticker_yahoo(base)
         if ok:
-            nome_show = nome.strip() if nome else base
+            nome_show = nome_comercial_para_ticker(base, nome_raw)
             ticker_box.markdown(
                 f'<div class="ticker-status ticker-ok">Encontrado: <b>{nome_show}</b> ({base})</div>',
                 unsafe_allow_html=True,
@@ -544,7 +609,7 @@ if ticker_input:
             )
     else:
         ticker_box.markdown(
-            '<div class="ticker-status ticker-neutral">Continue digitando… Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
+            '<div class="ticker-status ticker-neutral">Ex.: <b>PETR4</b>, <b>VALE3</b>, <b>BBAS3</b></div>',
             unsafe_allow_html=True,
         )
 else:
@@ -578,7 +643,6 @@ Desenvolvido por: <br>
 
 # =========================================================
 # 4) EXECUÇÃO CONTROLADA (botão) + PERSISTÊNCIA
-#    ✅ Spinners SEM “caixa clicável” e somem ao terminar
 # =========================================================
 
 if btn_analisar:
@@ -591,7 +655,8 @@ if btn_analisar:
         st.stop()
 
     base, _ = normaliza_ticker_usuario(ticker_input)
-    load_warnings = []
+    load_warnings: list[str] = []
+    load_infos: list[str] = []
 
     with st.spinner("Carregando ativo (Yahoo Finance)..."):
         df_acao = carregar_dados_completos(base)
@@ -605,12 +670,14 @@ if btn_analisar:
         if s_rf is None or s_rf.empty:
             load_warnings.append("BCB indisponível: não foi possível carregar CDI/Selic. Exibindo apenas o ativo.")
 
-        s_ipca_raw = busca_indice_bcb(433, data_inicio, data_fim)
-        if s_ipca_raw is None or s_ipca_raw.empty:
+        # ✅ IPCA: busca em janela maior + estimativa 12m se faltar publicação
+        s_ipca_daily, nome_ipca, ipca_estimado = carregar_ipca_com_estimativa(data_inicio, data_fim)
+        if s_ipca_daily is None or s_ipca_daily.empty:
             load_warnings.append("BCB indisponível: não foi possível carregar IPCA. Exibindo apenas o ativo.")
-            s_ipca_daily, nome_ipca = pd.Series(dtype="float64"), "IPCA"
-        else:
-            s_ipca_daily, nome_ipca = ipca_diario_com_estimativa_12m(s_ipca_raw, data_inicio, data_fim)
+            s_ipca_daily = pd.Series(dtype="float64")
+            nome_ipca = "IPCA"
+        elif ipca_estimado:
+            load_infos.append("IPCA do período ainda não foi publicado; usando estimativa baseada na média dos últimos 12 meses.")
 
     with st.spinner("Carregando Ibovespa (Yahoo)..."):
         s_ibov = carregar_ibov(data_inicio, data_fim)
@@ -622,6 +689,7 @@ if btn_analisar:
 
     st.session_state["analysis_ready"] = True
     st.session_state["load_warnings"] = load_warnings
+    st.session_state["load_infos"] = load_infos
     st.session_state["params"] = {
         "ticker": base,
         "aporte": float(valor_aporte),
@@ -631,7 +699,7 @@ if btn_analisar:
     st.session_state["df_acao"] = df_acao
     st.session_state["s_rf"] = s_rf if s_rf is not None else pd.Series(dtype="float64")
     st.session_state["nome_rf"] = nome_rf if nome_rf else "Renda Fixa"
-    st.session_state["s_ipca"] = s_ipca_daily if s_ipca_daily is not None else pd.Series(dtype="float64")
+    st.session_state["s_ipca"] = s_ipca_daily
     st.session_state["nome_ipca"] = nome_ipca
     st.session_state["s_ibov"] = s_ibov if s_ibov is not None else pd.Series(dtype="float64")
 
@@ -677,6 +745,8 @@ st.caption(
 
 for msg in st.session_state.get("load_warnings", []):
     st.warning(msg)
+for msg in st.session_state.get("load_infos", []):
+    st.info(msg)
 
 # Recorte do ativo na janela
 df_v = df_acao.loc[(df_acao.index >= dt_ini_user) & (df_acao.index <= dt_fim_user)].copy()
