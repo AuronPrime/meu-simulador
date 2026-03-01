@@ -14,7 +14,8 @@ import calendar
 # =========================================================
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# ✅ Tooltip “flutuante” via JS (fica acima de tudo e não é cortado pela sidebar)
+# ✅ (mantido) Tooltip flutuante via JS — agora não será usado (ícone removido),
+# mas não atrapalha e pode ser reaproveitado no futuro.
 components.html(
     """
 <script>
@@ -49,34 +50,22 @@ components.html(
     position(el);
   }
 
-  function hide() {
-    tooltip.style.opacity = '0';
-  }
+  function hide() { tooltip.style.opacity = '0'; }
 
   function position(el) {
     const rect = el.getBoundingClientRect();
     const pad = 10;
 
-    // posição padrão: à direita do ícone
     let x = rect.right + pad;
     let y = rect.top - 6;
 
-    // mede depois do conteúdo setado
     const tw = tooltip.offsetWidth || 260;
     const th = tooltip.offsetHeight || 60;
 
-    // se estourar à direita, joga para esquerda
-    if (x + tw + 8 > window.innerWidth) {
-      x = rect.left - tw - pad;
-    }
-
-    // limita bordas
+    if (x + tw + 8 > window.innerWidth) x = rect.left - tw - pad;
     if (x < 8) x = 8;
 
-    // se estourar embaixo, ajusta
-    if (y + th + 8 > window.innerHeight) {
-      y = window.innerHeight - th - 8;
-    }
+    if (y + th + 8 > window.innerHeight) y = window.innerHeight - th - 8;
     if (y < 8) y = 8;
 
     tooltip.style.left = x + 'px';
@@ -108,7 +97,6 @@ st.markdown(
 <style>
     [data-testid="stMetricValue"] { font-size: 1.8rem; font-weight: 700; color: #1f77b4; }
 
-    /* ✅ Títulos custom (sem “ícone/link” do Streamlit) */
     .page-title{
         font-size: 2.25rem;
         font-weight: 900;
@@ -167,7 +155,6 @@ st.markdown(
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
     .glossario-def { color: #475569; font-size: 0.9rem; line-height: 1.5; display: block; margin-bottom: 15px; }
 
-    /* ✅ Guia maior (mais “título”), mas menor que o título principal */
     .glossario-title {
         font-size: 1.35rem;
         font-weight: 900;
@@ -188,22 +175,20 @@ st.markdown(
         line-height: 1.5;
     }
 
-    /* ✅ Status do ticker (bem pequeno e “colado” no input) */
     .ticker-status {
         font-size: 0.74rem;
         padding: 5px 8px;
         border-radius: 8px;
-        margin-top: -10px;     /* cola no campo */
+        margin-top: -10px;
         margin-bottom: 8px;
         border: 1px solid;
         line-height: 1.25;
-        color: #0f172a;        /* letra preta */
+        color: #0f172a;
     }
     .ticker-ok { background: #dcfce7; border-color: #86efac; }
     .ticker-bad { background: #fee2e2; border-color: #fca5a5; }
     .ticker-neutral { background: #f8fafc; border-color: #e2e8f0; color: #475569; margin-top: -10px; }
 
-    /* ✅ Label do ticker + ícone tooltip */
     .ticker-label-row{
         display:flex;
         align-items:center;
@@ -217,21 +202,6 @@ st.markdown(
         margin: 0;
         padding: 0;
     }
-    .rb-tooltip-icon{
-        display:inline-flex;
-        align-items:center;
-        justify-content:center;
-        width:18px;
-        height:18px;
-        border-radius:999px;
-        border:1px solid #cbd5e1;
-        color:#0f172a;
-        background:#ffffff;
-        font-size: 0.8rem;
-        font-weight: 800;
-        cursor: help;
-        user-select:none;
-    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -240,7 +210,6 @@ st.markdown(
 def formata_br(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# ✅ Título sem “hyperlink/âncora”
 st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
 # =========================================================
@@ -630,7 +599,7 @@ def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
         return False, ""
 
 # =========================================================
-# 3) BARRA LATERAL (FORM + INSTRUÇÕES + TICKER STATUS + TOOLTIP)
+# 3) BARRA LATERAL (FORM + INSTRUÇÕES + TICKER STATUS)
 # =========================================================
 
 st.sidebar.markdown(
@@ -652,13 +621,11 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-# ✅ Label com tooltip flutuante (não corta)
+# ✅ SEM tooltip (removido)
 st.sidebar.markdown(
     """
 <div class="ticker-label-row">
   <div class="ticker-label">Digite o Ticker</div>
-  <div class="rb-tooltip-icon"
-       data-tooltip="Ticker é o código da ação na bolsa (ex.: PETR4, VALE3, BBAS3). Você pode digitar com ou sem .SA.">?</div>
 </div>
 """,
     unsafe_allow_html=True,
@@ -673,7 +640,6 @@ ticker_input_raw = st.sidebar.text_input(
 ticker_input_raw = (ticker_input_raw or "").upper().strip()
 base_ticker, _ = normaliza_ticker_usuario(ticker_input_raw)
 
-# ✅ Status “colado” abaixo do input
 status_box = st.sidebar.empty()
 if base_ticker:
     if len(base_ticker) >= 4:
@@ -729,7 +695,7 @@ Desenvolvido por: <br>
 # =========================================================
 
 if btn_analisar:
-    ticker_input = base_ticker  # usa sempre sem ".SA"
+    ticker_input = base_ticker
 
     if not ticker_input:
         st.error("Digite um ticker válido no menu lateral.")
