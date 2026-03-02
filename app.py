@@ -14,8 +14,7 @@ import calendar
 # =========================================================
 st.set_page_config(page_title="Simulador de Patrimônio", layout="wide")
 
-# ✅ (mantido) Tooltip flutuante via JS — agora não será usado (ícone removido),
-# mas não atrapalha e pode ser reaproveitado no futuro.
+# Tooltip flutuante via JS (mantido)
 components.html(
     """
 <script>
@@ -145,6 +144,7 @@ st.markdown(
         text-align: center;
     }
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
+    .total-sub-label { font-size: 0.72rem; font-weight: 700; color: #475569; margin-top: 2px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 18px; border-radius: 0 0 12px 12px; margin-bottom: 15px; }
@@ -213,8 +213,48 @@ def formata_br(valor: float) -> str:
 st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
 # =========================================================
-# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO
+# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO (Benchmarks + Datas)
 # =========================================================
+
+DIAS_MES = 30
+DIAS_ANO = 365
+
+def decompor_periodo_anos_meses_dias(dt_ini: pd.Timestamp, dt_fim: pd.Timestamp) -> tuple[int, int, int]:
+    """Decompõe um intervalo em anos/meses/dias com mês=30 dias e ano=365 dias.
+       Converte excedentes (ex.: 40 dias -> 1 mês 10 dias)."""
+    dt_ini = pd.to_datetime(dt_ini).normalize()
+    dt_fim = pd.to_datetime(dt_fim).normalize()
+    total_days = int((dt_fim - dt_ini).days)
+    if total_days < 0:
+        total_days = 0
+
+    anos = total_days // DIAS_ANO
+    rem = total_days % DIAS_ANO
+    meses = rem // DIAS_MES
+    dias = rem % DIAS_MES
+    return int(anos), int(meses), int(dias)
+
+def formatar_meses_dias(meses: int, dias: int) -> str:
+    m_txt = "mês" if meses == 1 else "meses"
+    d_txt = "dia" if dias == 1 else "dias"
+    return f"{meses} {m_txt} e {dias} {d_txt}"
+
+def titulo_periodo_dinamico(anos: int, meses: int, dias: int) -> tuple[str, str | None]:
+    """Retorna (titulo_principal, sublinha)."""
+    if anos >= 1:
+        titulo = "Total em 1 ano" if anos == 1 else f"Total em {anos} anos"
+        sub = formatar_meses_dias(meses, dias)
+        return titulo, sub
+
+    # < 1 ano
+    if meses >= 1:
+        titulo = "Total em 1 mês" if meses == 1 else f"Total em {meses} meses"
+        sub = f"{dias} {'dia' if dias == 1 else 'dias'}"
+        return titulo, sub
+
+    # só dias
+    titulo = "Total em 1 dia" if dias == 1 else f"Total em {dias} dias"
+    return titulo, None
 
 def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30) -> pd.DataFrame:
     s, e = d_inicio.strftime("%d/%m/%Y"), d_fim.strftime("%d/%m/%Y")
@@ -233,6 +273,7 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30)
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
+    """Retorna série em NÍVEL (índice), via cumprod do retorno (valor%/100)."""
     if d_inicio is None or d_fim is None or d_inicio > d_fim:
         return pd.Series(dtype="float64")
 
@@ -278,25 +319,56 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
 
     s = df_all["valor"].astype(float)
     s = s[~s.index.duplicated(keep="last")]
+
+    # nível (índice) acumulado
     return (1.0 + s).cumprod()
+
+def _inicio_buffer_ipca(d_inicio: date) -> date:
+    """IPCA é mensal; precisamos garantir um ponto anterior ao 1º aporte para o ffill (evita sumir no card)."""
+    ts = pd.Timestamp(d_inicio).normalize()
+    ts = ts.replace(day=1) - pd.DateOffset(months=2)  # garante mês anterior mesmo se início for no fim do mês
+    return ts.date()
+
+def _inicio_buffer_rf(d_inicio: date) -> date:
+    """CDI/Selic: buffer pequeno para garantir asof/ffill no 1º aporte."""
+    ts = pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=35)
+    return ts.date()
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
-    s_cdi = busca_indice_bcb(12, d_inicio, d_fim)
+    d0 = _inicio_buffer_rf(d_inicio)
+    s_cdi = busca_indice_bcb(12, d0, d_fim)
     if s_cdi is not None and not s_cdi.empty:
         return s_cdi, "CDI"
 
-    s_selic = busca_indice_bcb(11, d_inicio, d_fim)
+    s_selic = busca_indice_bcb(11, d0, d_fim)
     if s_selic is not None and not s_selic.empty:
         return s_selic, "Selic (proxy CDI)"
 
     return pd.Series(dtype="float64"), "Renda Fixa"
 
-def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def carregar_ipca(d_inicio: date, d_fim: date) -> pd.Series:
+    d0 = _inicio_buffer_ipca(d_inicio)
+    return busca_indice_bcb(433, d0, d_fim)
+
+def projetar_indice_ate_fim(
+    s: pd.Series,
+    dt_fim: date,
+    prefer_meses: tuple[int, int] = (6, 3),
+    dias_mes: int = 30,
+) -> pd.Series:
+    """Projeta a série em NÍVEL até dt_fim se faltar dado.
+       Estima usando média geométrica (composta) dos últimos 6 meses; se não der, 3; se não der, usa o que tiver.
+       (mês = 30 dias para projeção)"""
     if s is None or s.empty:
         return s
 
-    dt_fim_ts = pd.Timestamp(dt_fim)
+    s = pd.Series(s).dropna().sort_index()
+    if s.empty:
+        return s
+
+    dt_fim_ts = pd.Timestamp(dt_fim).normalize()
     if getattr(s.index, "tz", None) is not None:
         dt_fim_ts = dt_fim_ts.tz_localize(s.index.tz)
 
@@ -304,32 +376,47 @@ def projetar_indice_ate_fim(s: pd.Series, dt_fim: date) -> pd.Series:
     if ultima_data >= dt_fim_ts:
         return s
 
-    dt_12m_atras = ultima_data - pd.DateOffset(months=12)
-    s_historico = s.loc[:ultima_data]
+    last_val = float(s.iloc[-1])
 
-    try:
-        idx_12m = s_historico.index.get_indexer([dt_12m_atras], method="nearest")[0]
-        val_passado = s_historico.iloc[idx_12m]
-        data_passado = s_historico.index[idx_12m]
-    except Exception:
-        val_passado = s_historico.iloc[0]
-        data_passado = s_historico.index[0]
+    # tenta 6 meses, depois 3 meses; se não houver, usa o máximo possível
+    chosen_daily_rate = None
 
-    dias_decorridos = (ultima_data - data_passado).days
-    if dias_decorridos <= 0:
-        return s
+    for m in prefer_meses:
+        lookback_days = int(m * dias_mes)
+        cutoff = ultima_data - pd.Timedelta(days=lookback_days)
 
-    taxa_diaria = (float(s.iloc[-1]) / float(val_passado)) ** (1 / dias_decorridos) - 1
+        pos = s.index.get_indexer([cutoff], method="ffill")[0]
+        if pos == -1:
+            continue
+
+        data_passada = s.index[pos]
+        val_passado = float(s.iloc[pos])
+        dias_decorridos = int((ultima_data - data_passada).days)
+
+        if dias_decorridos >= 10 and val_passado > 0 and last_val > 0:
+            chosen_daily_rate = (last_val / val_passado) ** (1 / dias_decorridos) - 1
+            break
+
+    # fallback: usa do início da série
+    if chosen_daily_rate is None:
+        data_passada = s.index[0]
+        val_passado = float(s.iloc[0])
+        dias_decorridos = int((ultima_data - data_passada).days)
+        if dias_decorridos <= 0 or val_passado <= 0 or last_val <= 0:
+            return s
+        chosen_daily_rate = (last_val / val_passado) ** (1 / dias_decorridos) - 1
 
     datas_faltantes = pd.date_range(start=ultima_data + pd.Timedelta(days=1), end=dt_fim_ts, freq="D")
-    projetados = []
-    val_atual = float(s.iloc[-1])
+    if len(datas_faltantes) == 0:
+        return s
 
+    vals = []
+    v = last_val
     for _ in datas_faltantes:
-        val_atual *= (1 + taxa_diaria)
-        projetados.append(val_atual)
+        v *= (1 + chosen_daily_rate)
+        vals.append(v)
 
-    s_proj = pd.Series(projetados, index=datas_faltantes)
+    s_proj = pd.Series(vals, index=datas_faltantes)
     return pd.concat([s, s_proj])
 
 def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
@@ -353,21 +440,39 @@ def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
     return eff
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
-def carregar_dados_completos(t: str) -> pd.DataFrame | None:
+def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFrame | None:
+    """Baixa histórico do ativo (somente janela necessária) e constrói Price_Fact/Total_Fact."""
     if not t:
         return None
+
     t_sa = t if ".SA" in t else t + ".SA"
+
+    # Performance: baixa apenas o necessário (com folga para bfill/ffill)
+    start = (pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=10)).date()
+    end = (pd.Timestamp(d_fim).normalize() + pd.Timedelta(days=2)).date()
+
     try:
-        tk = yf.Ticker(t_sa)
-        df = tk.history(start="1900-01-01", auto_adjust=False, actions=True, interval="1d")
+        df = yf.download(
+            t_sa,
+            start=start,
+            end=end,
+            progress=False,
+            auto_adjust=False,
+            actions=True,
+            interval="1d",
+            threads=False,
+        )
 
         if df is None or df.empty:
             return None
+
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
+
         if getattr(df.index, "tz", None) is not None:
             df.index = df.index.tz_localize(None)
 
+        # garante colunas
         for col in ["Close", "Dividends", "Stock Splits"]:
             if col not in df.columns:
                 df[col] = 0.0
@@ -395,7 +500,14 @@ def carregar_dados_completos(t: str) -> pd.DataFrame | None:
 def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
     try:
         start = max(pd.Timestamp(d_inicio), pd.Timestamp("1990-01-01"))
-        df = yf.download("^BVSP", start=start.date(), end=d_fim + timedelta(days=1), progress=False, auto_adjust=False)
+        df = yf.download(
+            "^BVSP",
+            start=start.date(),
+            end=(pd.Timestamp(d_fim) + pd.Timedelta(days=2)).date(),
+            progress=False,
+            auto_adjust=False,
+            threads=False,
+        )
         if df is None or df.empty:
             return pd.Series(dtype="float64")
         if isinstance(df.columns, pd.MultiIndex):
@@ -463,9 +575,12 @@ def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.Dateti
     end = s.asof(data_ref)
     if pd.isna(end):
         return None
+
     at = s.reindex(datas_aporte, method="ffill")
+    # se faltar valor no 1º aporte (problema típico quando não buscamos buffer anterior), retorna None
     if at.isna().any():
         return None
+
     return float((valor_mensal * (end / at)).sum())
 
 def calcular_horizonte(
@@ -621,7 +736,6 @@ hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-# ✅ SEM tooltip (removido)
 st.sidebar.markdown(
     """
 <div class="ticker-label-row">
@@ -706,22 +820,22 @@ if btn_analisar:
 
     with st.status("Preparando simulação...", expanded=True) as status:
         st.write("📥 Sincronizando dados de mercado (Yahoo Finance)...")
-        df_acao = carregar_dados_completos(ticker_input)
+        df_acao = carregar_dados_completos(ticker_input, data_inicio, data_fim)
         if df_acao is None or df_acao.empty:
             status.update(label="Falha: Ticker não encontrado ou sem dados suficientes.", state="error")
             st.stop()
 
         st.write("🏦 Consultando Renda Fixa (CDI/Selic)...")
         s_rf, nome_rf = carregar_renda_fixa(data_inicio, data_fim)
-        s_rf = projetar_indice_ate_fim(s_rf, data_fim)
+        s_rf = projetar_indice_ate_fim(s_rf, data_fim, prefer_meses=(6, 3), dias_mes=DIAS_MES)
 
         st.write("🛒 Consultando inflação (IPCA)...")
-        s_ipca = busca_indice_bcb(433, data_inicio, data_fim)
-        s_ipca = projetar_indice_ate_fim(s_ipca, data_fim)
+        s_ipca = carregar_ipca(data_inicio, data_fim)
+        s_ipca = projetar_indice_ate_fim(s_ipca, data_fim, prefer_meses=(6, 3), dias_mes=DIAS_MES)
 
         st.write("📊 Carregando Ibovespa...")
         s_ibov = carregar_ibov(data_inicio, data_fim)
-        s_ibov = projetar_indice_ate_fim(s_ibov, data_fim)
+        s_ibov = projetar_indice_ate_fim(s_ibov, data_fim, prefer_meses=(6, 3), dias_mes=DIAS_MES)
 
         status.update(label="Simulação montada com sucesso!", state="complete", expanded=False)
 
@@ -865,22 +979,155 @@ fig.update_xaxes(range=[dt_ini_user, dt_fim_user])
 st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------
-# “Simulação de Patrimônio Acumulado” (sem hyperlink/âncora)
+# CARDS
 # -------------------------
 st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
 
-horizontes = [10, 5, 1]
-cols = st.columns(3)
+def render_card_html(
+    titulo_col: str,
+    vf: float | None,
+    vi: float | None,
+    lucro: float | None,
+    v_rf: float | None,
+    v_ipca: float | None,
+    v_ibov: float | None,
+    nome_rf_local: str,
+    inicio_eff: pd.Timestamp | None,
+    data_ref: pd.Timestamp | None,
+    n_aportes: int | None,
+    sub_label: str | None = None,
+    mostrar_tudo_bench: bool = False,
+) -> str:
+    # valores principais
+    if vf is None or vi is None or lucro is None or inicio_eff is None or data_ref is None or n_aportes is None:
+        return f"""
+        <div class="total-card">
+            <div class="total-label">{titulo_col}</div>
+            <div class="total-amount">—</div>
+        </div>
+        <div class="info-card" style="border-top: 1px solid #e2e8f0;">
+            <div class="card-header">Aviso</div>
+            <div class="card-item">Dados insuficientes para o cálculo neste período.</div>
+        </div>
+        """
+
+    rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0.0
+    cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"
+    emoji_rendimento = "📈"
+
+    # benchmarks: sempre aparecer quando o modo all-in estiver ativo
+    bench_lines = []
+
+    def line_or_dash(icon: str, label: str, val: float | None) -> str:
+        if val is None:
+            return f'<div class="card-item">{icon} <b>{label}:</b> —</div>'
+        return f'<div class="card-item">{icon} <b>{label}:</b> {formata_br(val)}</div>'
+
+    if mostrar_tudo_bench:
+        bench_lines.append(line_or_dash("🎯", nome_rf_local, v_rf))
+        bench_lines.append(line_or_dash("📈", "Ibovespa", v_ibov))
+        bench_lines.append(line_or_dash("🛡️", "Correção IPCA", v_ipca))
+    else:
+        if mostrar_rf:
+            bench_lines.append(line_or_dash("🎯", nome_rf_local, v_rf))
+        if mostrar_ibov:
+            bench_lines.append(line_or_dash("📈", "Ibovespa", v_ibov))
+        if mostrar_ipca:
+            bench_lines.append(line_or_dash("🛡️", "Correção IPCA", v_ipca))
+
+        if not bench_lines:
+            bench_lines.append('<div class="card-item">—</div>')
+
+    inicio_eff_str = inicio_eff.date().strftime("%d/%m/%Y")
+    data_ref_str = data_ref.date().strftime("%d/%m/%Y")
+
+    sub_html = f'<div class="total-sub-label">{sub_label}</div>' if sub_label else ""
+
+    return f"""
+    <div class="total-card">
+        <div class="total-label">{titulo_col}</div>
+        {sub_html}
+        <div class="total-amount">{formata_br(vf)}</div>
+    </div>
+    <div class="info-card">
+        <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
+        <div class="card-item" style="font-size: 1.00rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">
+            {emoji_rendimento} <b>Rendimento Nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)
+        </div>
+        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+        <div class="card-header">Benchmarks (Valor Corrigido)</div>
+        {''.join(bench_lines)}
+        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
+        <div class="card-header">Detalhes</div>
+        <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>
+        <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str}</div>
+        <div class="card-item">🗓️ <b>Nº de aportes:</b> {n_aportes}</div>
+    </div>
+    """
+
+cols = st.columns(4)
 
 dt_ini_eff = proximo_pregao_a_partir(df_acao.index, dt_ini_user)
 if dt_ini_eff is None:
     st.error("Não foi possível determinar o primeiro pregão disponível para o ativo.")
     st.stop()
 
-for anos, col in zip(horizontes, cols):
+# 1) CARD do PERÍODO SELECIONADO (sempre com todas infos)
+with cols[0]:
+    # calcula até o fim selecionado
+    res_periodo = calcular_horizonte(
+        df_full=df_acao,
+        valor_mensal=float(valor_aporte_exec),
+        dt_inicio_user=dt_ini_user,
+        dt_ref_target=dt_fim_user,
+        s_rf=s_rf,
+        s_ipca=s_ipca,
+        s_ibov=s_ibov,
+    )
+
+    if res_periodo is None:
+        st.markdown(
+            render_card_html(
+                titulo_col="Total no período",
+                vf=None, vi=None, lucro=None,
+                v_rf=None, v_ipca=None, v_ibov=None,
+                nome_rf_local=nome_rf,
+                inicio_eff=None, data_ref=None,
+                n_aportes=None,
+                sub_label=None,
+                mostrar_tudo_bench=True,
+            ),
+            unsafe_allow_html=True,
+        )
+    else:
+        anos, meses, dias = decompor_periodo_anos_meses_dias(res_periodo["dt_inicio_eff"], res_periodo["data_ref"])
+        titulo_main, sub = titulo_periodo_dinamico(anos, meses, dias)
+
+        st.markdown(
+            render_card_html(
+                titulo_col=titulo_main,
+                vf=res_periodo["vf"],
+                vi=res_periodo["vi"],
+                lucro=res_periodo["lucro"],
+                v_rf=res_periodo["v_rf"],
+                v_ipca=res_periodo["v_ipca"],
+                v_ibov=res_periodo["v_ibov"],
+                nome_rf_local=nome_rf,
+                inicio_eff=res_periodo["dt_inicio_eff"],
+                data_ref=res_periodo["data_ref"],
+                n_aportes=res_periodo["n_aportes"],
+                sub_label=sub,
+                mostrar_tudo_bench=True,
+            ),
+            unsafe_allow_html=True,
+        )
+
+# 2) CARDS 10 / 5 / 1 anos (mantém lógica original e respeita toggles)
+horizontes = [10, 5, 1]
+for anos_h, col in zip(horizontes, cols[1:]):
     with col:
-        titulo_col = f"Total em {anos} anos" if anos > 1 else "Total em 1 ano"
-        dt_target = dt_ini_eff + pd.DateOffset(years=anos)
+        titulo_col = f"Total em {anos_h} anos" if anos_h > 1 else "Total em 1 ano"
+        dt_target = dt_ini_eff + pd.DateOffset(years=anos_h)
 
         if dt_target > dt_fim_user:
             st.markdown(
@@ -892,7 +1139,7 @@ for anos, col in zip(horizontes, cols):
             <div class="info-card" style="border-top: 1px solid #e2e8f0;">
                 <div class="card-header">Período insuficiente</div>
                 <div class="card-item">
-                    Para calcular <b>{anos} anos</b>, aumente a data final para <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
+                    Para calcular <b>{anos_h} anos</b>, aumente a data final para <b>≥ {dt_target.date().strftime('%d/%m/%Y')}</b>.
                 </div>
             </div>
             """,
@@ -912,65 +1159,36 @@ for anos, col in zip(horizontes, cols):
 
         if res is None:
             st.markdown(
-                f"""
-            <div class="total-card">
-                <div class="total-label">{titulo_col}</div>
-                <div class="total-amount">—</div>
-            </div>
-            <div class="info-card" style="border-top: 1px solid #e2e8f0;">
-                <div class="card-header">Aviso</div>
-                <div class="card-item">Dados insuficientes para o cálculo neste horizonte.</div>
-            </div>
-            """,
+                render_card_html(
+                    titulo_col=titulo_col,
+                    vf=None, vi=None, lucro=None,
+                    v_rf=None, v_ipca=None, v_ibov=None,
+                    nome_rf_local=nome_rf,
+                    inicio_eff=None, data_ref=None,
+                    n_aportes=None,
+                    sub_label=None,
+                    mostrar_tudo_bench=False,
+                ),
                 unsafe_allow_html=True,
             )
             continue
 
-        vf = res["vf"]
-        vi = res["vi"]
-        lucro = res["lucro"]
-        v_rf = res["v_rf"]
-        v_ipca = res["v_ipca"]
-        v_ibov = res["v_ibov"]
-
-        rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0
-        cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"
-        emoji_rendimento = "📈"
-
-        bench_lines = []
-        if mostrar_rf and v_rf is not None:
-            bench_lines.append(f'<div class="card-item">🎯 <b>{nome_rf}:</b> {formata_br(v_rf)}</div>')
-        if mostrar_ibov and v_ibov is not None:
-            bench_lines.append(f'<div class="card-item">📈 <b>Ibovespa:</b> {formata_br(v_ibov)}</div>')
-        if mostrar_ipca and v_ipca is not None:
-            bench_lines.append(f'<div class="card-item">🛡️ <b>Correção IPCA:</b> {formata_br(v_ipca)}</div>')
-        if not bench_lines:
-            bench_lines.append('<div class="card-item">—</div>')
-
-        inicio_eff_str = res["dt_inicio_eff"].date().strftime("%d/%m/%Y")
-        data_ref_str = res["data_ref"].date().strftime("%d/%m/%Y")
-
         st.markdown(
-            f"""
-        <div class="total-card">
-            <div class="total-label">{titulo_col}</div>
-            <div class="total-amount">{formata_br(vf)}</div>
-        </div>
-        <div class="info-card">
-            <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>
-            <div class="card-item" style="font-size: 1.00rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">
-                {emoji_rendimento} <b>Rendimento Nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)
-            </div>
-            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
-            <div class="card-header">Benchmarks (Valor Corrigido)</div>
-            {''.join(bench_lines)}
-            <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">
-            <div class="card-header">Detalhes</div>
-            <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>
-            <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str}</div>
-            <div class="card-item">🗓️ <b>Nº de aportes:</b> {res['n_aportes']}</div>
-        </div>
-        """,
+            render_card_html(
+                titulo_col=titulo_col,
+                vf=res["vf"],
+                vi=res["vi"],
+                lucro=res["lucro"],
+                v_rf=res["v_rf"],
+                v_ipca=res["v_ipca"],
+                v_ibov=res["v_ibov"],
+                nome_rf_local=nome_rf,
+                inicio_eff=res["dt_inicio_eff"],
+                data_ref=res["data_ref"],
+                n_aportes=res["n_aportes"],
+                sub_label=None,
+                mostrar_tudo_bench=False,
+            ),
             unsafe_allow_html=True,
         )
 
@@ -978,15 +1196,15 @@ for anos, col in zip(horizontes, cols):
 # GUIA
 # -------------------------
 st.markdown(
-    """
+    f"""
 <div class="glossario-container">
   <div class="glossario-title">Guia de Termos e Indicadores</div>
 
   <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores do mês atual ou faltantes são projetados com base na média dos últimos 12 meses.</span>
+  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores faltantes/recentes são projetados com base na média composta dos últimos <b>6 meses</b> (fallback para 3).</span>
 
   <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes de publicação pelo IBGE são estimadas usando a inflação média histórica do último ano.</span>
+  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes (mês vigente ainda não consolidado) são estimadas usando a inflação média composta dos últimos <b>6 meses</b> (fallback para 3), com <b>mês=30 dias</b> para projeção.</span>
 
   <span class="glossario-termo">• Ibovespa</span>
   <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
