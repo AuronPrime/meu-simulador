@@ -206,7 +206,7 @@ st.markdown(
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
 
-    /* ✅ Novo: linhas discretas para “Proventos” e “Preço” */
+    /* Linhas discretas para “Proventos” e “Preço” */
     .sub-note{
         font-size: 0.78rem;
         color: #475569; /* cinza escuro */
@@ -277,19 +277,19 @@ st.markdown(
 def formata_br(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def formata_qtd(qtd: float, casas: int = 4) -> str:
-    return f"{qtd:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def formata_int_br(n: int) -> str:
+    return f"{int(n):,}".replace(",", ".")
 
 st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
 # =========================================================
-# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO (Benchmarks + Datas)
+# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO
 # =========================================================
 
 DIAS_MES = 30
 DIAS_ANO = 365
 
-# ✅ início “seguro” do banco (conjunto de dados) para ações + ibov
+# início “seguro” do banco (conjunto de dados) para ações + ibov
 MIN_DATA_BANCO = date(1990, 1, 1)
 
 # Cores
@@ -535,12 +535,13 @@ def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFram
         df["Stock Splits"] = df["Stock Splits"].fillna(0.0).astype(float)
 
         split_eff = _split_efetivo_para_evitar_degrau(df)
+        df["Split_Eff"] = split_eff.fillna(1.0).astype(float)
 
         close = df["Close"].astype(float)
         prev_close = close.shift(1)
 
-        price_factor = (close * split_eff) / prev_close
-        total_factor = ((close + df["Dividends"]) * split_eff) / prev_close
+        price_factor = (close * df["Split_Eff"]) / prev_close
+        total_factor = ((close + df["Dividends"]) * df["Split_Eff"]) / prev_close
 
         df["Price_Fact"] = price_factor.replace([np.inf, -np.inf], np.nan).fillna(1.0).cumprod()
         df["Total_Fact"] = total_factor.replace([np.inf, -np.inf], np.nan).fillna(1.0).cumprod()
@@ -550,7 +551,6 @@ def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFram
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
-    """Buffer extra para evitar gaps e aumentar chance de benchmark não virar None."""
     start = max(pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=90), pd.Timestamp(MIN_DATA_BANCO))
     end = (pd.Timestamp(d_fim).normalize() + pd.Timedelta(days=2)).date()
 
@@ -642,6 +642,69 @@ def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.Dateti
         return None
     return float((valor_mensal * (float(end) / at)).sum())
 
+def _simular_acoes_inteiras(
+    df_slice: pd.DataFrame,
+    datas_aporte: pd.DatetimeIndex,
+    valor_mensal: float,
+    incluir_dividendos: bool,
+) -> tuple[float, int, float]:
+    """
+    Simulação realista:
+    - Compra somente AÇÕES INTEIRAS
+    - O troco fica em CAIXA
+    - Dividendos/JCP (se incluir_dividendos=True) entram em caixa e são reinvestidos
+      comprando ações inteiras quando possível.
+    """
+    aporte_set = set(pd.to_datetime(datas_aporte).tolist())
+
+    shares = 0  # inteiro
+    cash = 0.0
+
+    for dt, row in df_slice.iterrows():
+        close = float(row["Close"]) if pd.notna(row["Close"]) else np.nan
+        if not np.isfinite(close) or close <= 0:
+            continue
+
+        # 1) Split/grupamento (ajusta quantidade de ações; frações viram caixa)
+        split_ratio = float(row.get("Split_Eff", 1.0))
+        if not np.isfinite(split_ratio) or split_ratio <= 0:
+            split_ratio = 1.0
+
+        frac_cash = 0.0
+        if split_ratio != 1.0 and shares > 0:
+            new_shares = shares * split_ratio
+            shares_int = int(np.floor(new_shares + 1e-9))
+            frac = new_shares - shares_int
+            if frac > 1e-9:
+                frac_cash = frac * close
+                cash += frac_cash
+            shares = shares_int
+
+        # 2) Proventos (dividendos/JCP)
+        div = float(row.get("Dividends", 0.0))
+        if not np.isfinite(div) or div < 0:
+            div = 0.0
+
+        if incluir_dividendos and div > 0 and shares > 0:
+            cash += shares * div
+
+        # 3) Aporte mensal
+        aporte_today = dt in aporte_set
+        if aporte_today:
+            cash += valor_mensal
+
+        # 4) Compra (somente em dias em que entrou dinheiro: aporte, provento ou fração de split)
+        should_buy = aporte_today or (incluir_dividendos and div > 0) or (frac_cash > 0)
+        if should_buy and cash >= close:
+            n_buy = int(cash // close)
+            if n_buy > 0:
+                shares += n_buy
+                cash -= n_buy * close
+
+    close_end = float(df_slice["Close"].iloc[-1])
+    final_value = shares * close_end + cash
+    return float(final_value), int(shares), float(cash)
+
 def calcular_horizonte(
     df_full: pd.DataFrame,
     valor_mensal: float,
@@ -653,6 +716,7 @@ def calcular_horizonte(
 ):
     if df_full is None or df_full.empty or valor_mensal <= 0:
         return None
+
     idx = df_full.index
 
     data_ref = ultimo_pregao_ate(idx, dt_ref_target)
@@ -669,21 +733,27 @@ def calcular_horizonte(
 
     investido = float(len(datas_aporte) * valor_mensal)
 
-    tr_end = float(df_full.loc[data_ref, "Total_Fact"])
-    tr_at = df_full.loc[datas_aporte, "Total_Fact"].astype(float)
-    vf_total = float((valor_mensal * (tr_end / tr_at)).sum())
+    df_slice = df_full.loc[(df_full.index >= dt_inicio_eff) & (df_full.index <= data_ref), ["Close", "Dividends", "Split_Eff"]].copy()
+    if df_slice.empty:
+        return None
+
+    vf_total, shares_total, cash_total = _simular_acoes_inteiras(
+        df_slice=df_slice,
+        datas_aporte=datas_aporte,
+        valor_mensal=valor_mensal,
+        incluir_dividendos=True,
+    )
+
+    vf_preco, shares_preco, cash_preco = _simular_acoes_inteiras(
+        df_slice=df_slice,
+        datas_aporte=datas_aporte,
+        valor_mensal=valor_mensal,
+        incluir_dividendos=False,
+    )
+
     lucro_total = vf_total - investido
-
-    pr_end = float(df_full.loc[data_ref, "Price_Fact"])
-    pr_at = df_full.loc[datas_aporte, "Price_Fact"].astype(float)
-    vf_preco = float((valor_mensal * (pr_end / pr_at)).sum())
-
     lucro_preco = vf_preco - investido
     lucro_proventos = vf_total - vf_preco
-
-    # ✅ Novo: quantidade de ações no final do período do card
-    close_end = float(df_full.loc[data_ref, "Close"])
-    qtd_acoes = (vf_total / close_end) if (close_end > 0 and np.isfinite(close_end)) else None
 
     v_rf = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_rf, data_ref) if (s_rf is not None and not s_rf.empty) else None
     v_ipca = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_ipca, data_ref) if (s_ipca is not None and not s_ipca.empty) else None
@@ -693,11 +763,13 @@ def calcular_horizonte(
         "data_ref": data_ref,
         "dt_inicio_eff": dt_inicio_eff,
         "vf": vf_total,
+        "vf_preco": vf_preco,
         "vi": investido,
         "lucro": lucro_total,
         "lucro_proventos": lucro_proventos,
         "lucro_preco": lucro_preco,
-        "qtd_acoes": qtd_acoes,
+        "qtd_acoes": shares_total,       # ✅ agora é inteiro (ações inteiras)
+        "caixa": cash_total,             # ✅ troco não investido
         "v_rf": v_rf,
         "v_ipca": v_ipca,
         "v_ibov": v_ibov,
@@ -729,7 +801,6 @@ def add_benchmark_com_estimativa(
     last_official: pd.Timestamp | None,
     width: int = 2,
 ):
-    """Adiciona ao gráfico 1 ou 2 traces (oficial sólido + estimado tracejado)."""
     if s_level is None or s_level.empty:
         return
 
@@ -742,7 +813,6 @@ def add_benchmark_com_estimativa(
         return
 
     cutoff = pd.to_datetime(last_official).normalize()
-
     if cutoff >= dt_end:
         fig.add_trace(go.Scatter(x=y.index, y=y, name=nome, line=dict(color=cor, width=width)))
         return
@@ -841,7 +911,6 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# Cache local (somente se existir requests_cache)
 if REQUESTS_CACHE_AVAILABLE:
     st.sidebar.subheader("Performance")
     usar_cache_local = st.sidebar.checkbox("Ativar cache local (recomendado)", value=True, key="usar_cache_local")
@@ -944,7 +1013,7 @@ Desenvolvido por: <br>
 )
 
 # =========================================================
-# 4) EXECUÇÃO CONTROLADA (botão) + PERSISTÊNCIA
+# 4) EXECUÇÃO CONTROLADA
 # =========================================================
 
 def _last_date_or_none(s: pd.Series) -> pd.Timestamp | None:
@@ -1019,7 +1088,10 @@ if not st.session_state.get("analysis_ready", False):
 <div class="resumo-objetivo">
 <b>Simule investimentos com retorno total de verdade — sem “número bonito” que não fecha a conta.</b><br>
 Nossa ferramenta foi criada para comparar ativos com rigor, considerando aportes mensais e tratando corretamente eventos corporativos (split/bonificação/grupamento), que são exatamente onde muitos simuladores erram.<br>
-<b>Resultado:</b> você não recebe só um valor final. Você entende o que gerou o retorno — preço, proventos e o efeito do tempo.
+<b>Resultado:</b> você não recebe só um valor final. Você entende o que gerou o retorno — preço, proventos e o efeito do tempo.<br><br>
+
+<b>Diferença importante (mais realista):</b> aqui a simulação é feita com <b>ações inteiras</b> (sem frações).<br>
+Ou seja: em cada aporte/provento, o app compra o <b>máximo de ações possível</b> no dia. O que não dá para completar 1 ação fica em <b>caixa (troco)</b> para a próxima compra.
 </div>
 <div class="warn-box">
 ⏳ <b>A primeira consulta pode demorar um pouco</b>, porque precisamos coletar e preparar os dados.<br>
@@ -1034,7 +1106,7 @@ Nossa ferramenta foi criada para comparar ativos com rigor, considerando aportes
     st.stop()
 
 # =========================================================
-# 5) RENDERIZAÇÃO (gráfico + cards)
+# 5) RENDERIZAÇÃO
 # =========================================================
 
 params = st.session_state["params"]
@@ -1153,7 +1225,8 @@ def render_card_html(
     lucro: float | None,
     lucro_proventos: float | None,
     lucro_preco: float | None,
-    qtd_acoes: float | None,
+    qtd_acoes: int | None,
+    caixa: float | None,
     v_rf: float | None,
     v_ipca: float | None,
     v_ibov: float | None,
@@ -1211,18 +1284,17 @@ def render_card_html(
     inicio_eff_str = inicio_eff.date().strftime("%d/%m/%Y")
     data_ref_str = data_ref.date().strftime("%d/%m/%Y")
 
-    qtd_txt = "—" if (qtd_acoes is None or not np.isfinite(float(qtd_acoes))) else formata_qtd(float(qtd_acoes))
+    qtd_txt = "—" if qtd_acoes is None else formata_int_br(int(qtd_acoes))
+    caixa_txt = "—" if (caixa is None or not np.isfinite(float(caixa))) else formata_br(float(caixa))
 
     parts = []
     parts.append('<div class="total-card">')
 
-    # ✅ Badge acima do “Total em X anos”
     if badge_html:
         parts.append(f'  {badge_html}')
 
     parts.append(f'  <div class="total-label">{titulo_col}</div>')
 
-    # ✅ Complemento (meses/dias) logo abaixo do “Total em X anos”
     if sub_label:
         parts.append(f'  <div class="total-sub-label">{sub_label}</div>')
 
@@ -1236,7 +1308,6 @@ def render_card_html(
         f'📈 <b>Rendimento nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)</div>'
     )
 
-    # ✅ Agora: linhas pequenas e “discretas”
     if prov_val is not None:
         parts.append(f'  <div class="sub-note">Proventos: <span class="v">{formata_br(prov_val)}</span> ({prov_pct:.2f}%)</div>')
     else:
@@ -1250,17 +1321,18 @@ def render_card_html(
     parts.append('  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">')
     parts.append('  <div class="card-header">Benchmarks (Valor Corrigido)</div>')
     parts.extend([f'  {ln}' for ln in bench_lines])
+
     parts.append('  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">')
     parts.append('  <div class="card-header">Detalhes</div>')
     parts.append(f'  <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>')
     parts.append(f'  <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str}</div>')
     parts.append(f'  <div class="card-item">🗓️ <b>Nº de aportes:</b> {n_aportes}</div>')
     parts.append(f'  <div class="card-item">📦 <b>Qtd. de ações:</b> {qtd_txt}</div>')
+    parts.append(f'  <div class="card-item">💰 <b>Caixa (troco):</b> {caixa_txt}</div>')
     parts.append('</div>')
 
     return "\n".join(parts)
 
-# ✅ Removido o “Total em 1 ano” => agora são 3 cards
 cols = st.columns(3)
 
 dt_ini_eff = proximo_pregao_a_partir(df_acao.index, dt_ini_user)
@@ -1268,7 +1340,7 @@ if dt_ini_eff is None:
     st.error("Não foi possível determinar o primeiro pregão disponível para o ativo.")
     st.stop()
 
-# 1) CARD do PERÍODO SELECIONADO (dinâmico)
+# 1) CARD dinâmico
 with cols[0]:
     res_periodo = calcular_horizonte(
         df_full=df_acao,
@@ -1286,7 +1358,7 @@ with cols[0]:
                 titulo_col="Total no período",
                 vf=None, vi=None, lucro=None,
                 lucro_proventos=None, lucro_preco=None,
-                qtd_acoes=None,
+                qtd_acoes=None, caixa=None,
                 v_rf=None, v_ipca=None, v_ibov=None,
                 nome_rf_local=nome_rf,
                 inicio_eff=None, data_ref=None,
@@ -1309,7 +1381,8 @@ with cols[0]:
                 lucro=res_periodo["lucro"],
                 lucro_proventos=res_periodo["lucro_proventos"],
                 lucro_preco=res_periodo["lucro_preco"],
-                qtd_acoes=res_periodo["qtd_acoes"],
+                qtd_acoes=int(res_periodo["qtd_acoes"]),
+                caixa=float(res_periodo["caixa"]),
                 v_rf=res_periodo["v_rf"],
                 v_ipca=res_periodo["v_ipca"],
                 v_ibov=res_periodo["v_ibov"],
@@ -1366,7 +1439,8 @@ for anos_h, col in zip(horizontes, cols[1:]):
                 lucro=res["lucro"] if res else None,
                 lucro_proventos=res["lucro_proventos"] if res else None,
                 lucro_preco=res["lucro_preco"] if res else None,
-                qtd_acoes=res["qtd_acoes"] if res else None,
+                qtd_acoes=int(res["qtd_acoes"]) if res else None,
+                caixa=float(res["caixa"]) if res else None,
                 v_rf=res["v_rf"] if res else None,
                 v_ipca=res["v_ipca"] if res else None,
                 v_ibov=res["v_ibov"] if res else None,
@@ -1389,6 +1463,9 @@ st.markdown(
 <div class="glossario-container">
   <div class="glossario-title">Guia de Termos e Indicadores</div>
 
+  <span class="glossario-termo">• Ações inteiras + Caixa (troco)</span>
+  <span class="glossario-def">A simulação compra apenas <b>ações inteiras</b>. Quando sobra dinheiro que não completa 1 ação, ele fica em <b>caixa (troco)</b> e pode ser usado em compras futuras.</span>
+
   <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
   <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores faltantes/recentes são projetados com base na média composta dos últimos <b>6 meses</b> (fallback para 3). No gráfico, trecho estimado aparece como <b>tracejado</b>.</span>
 
@@ -1401,11 +1478,8 @@ st.markdown(
   <span class="glossario-termo">• Capital Nominal Investido</span>
   <span class="glossario-def">Somatório bruto de todos os aportes mensais, sem considerar juros, inflação ou retornos.</span>
 
-  <span class="glossario-termo">• Lucro Acumulado</span>
-  <span class="glossario-def">Diferença entre o patrimônio final calculado (com retorno total) e o capital nominal investido.</span>
-
   <span class="glossario-termo">• Retorno Total</span>
-  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, bonificações, splits/grupamentos etc.).</span>
+  <span class="glossario-def">Métrica que combina valorização do preço com proventos reinvestidos. Considera os eventos corporativos disponíveis na fonte (ex.: dividendos/JCP, splits/grupamentos etc.).</span>
 
   <p style="margin-top:15px; color:#64748b; font-size:0.85rem;">
     <b>Nota de dados:</b> proventos e eventos corporativos são obtidos do Yahoo Finance via yfinance. Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
