@@ -176,7 +176,7 @@ st.markdown(
         text-align: center;
     }
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
-    .total-sub-label { font-size: 0.72rem; font-weight: 700; color: #475569; margin-top: 2px; }
+    .total-sub-label { font-size: 0.72rem; font-weight: 700; color: #475569; margin-top: 2px; margin-bottom: 4px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
 
     .badge-dinamico {
@@ -188,7 +188,7 @@ st.markdown(
         border:1px solid #7dd3fc;
         padding: 3px 8px;
         border-radius: 999px;
-        margin: 0 auto 6px auto;
+        margin: 0 auto 8px auto;
     }
     .badge-fixo {
         display:inline-block;
@@ -199,12 +199,24 @@ st.markdown(
         border:1px solid #e2e8f0;
         padding: 3px 8px;
         border-radius: 999px;
-        margin: 0 auto 6px auto;
+        margin: 0 auto 8px auto;
     }
 
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 18px; border-radius: 0 0 12px 12px; margin-bottom: 15px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
     .card-item { font-size: 0.9rem; margin-bottom: 6px; color: #1e293b; }
+
+    /* ✅ Novo: linhas discretas para “Proventos” e “Preço” */
+    .sub-note{
+        font-size: 0.78rem;
+        color: #475569; /* cinza escuro */
+        margin: 2px 0 2px 0;
+        line-height: 1.25;
+    }
+    .sub-note .v{
+        color: #475569;
+        font-weight: 600;
+    }
 
     .glossario-container { margin-top: 40px; padding: 25px; background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; }
     .glossario-termo { font-weight: 800; color: #1f77b4; font-size: 1rem; display: block; }
@@ -265,6 +277,9 @@ st.markdown(
 def formata_br(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+def formata_qtd(qtd: float, casas: int = 4) -> str:
+    return f"{qtd:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
 # =========================================================
@@ -274,8 +289,7 @@ st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>'
 DIAS_MES = 30
 DIAS_ANO = 365
 
-# ✅ Ajuste: início real do “banco” suportado (evita datas irreais tipo 1900)
-# (banco = conjunto de dados que conseguimos puxar com consistência)
+# ✅ início “seguro” do banco (conjunto de dados) para ações + ibov
 MIN_DATA_BANCO = date(1990, 1, 1)
 
 # Cores
@@ -537,7 +551,7 @@ def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFram
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
     """Buffer extra para evitar gaps e aumentar chance de benchmark não virar None."""
-    start = max(pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=90), pd.Timestamp("1990-01-01"))
+    start = max(pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=90), pd.Timestamp(MIN_DATA_BANCO))
     end = (pd.Timestamp(d_fim).normalize() + pd.Timedelta(days=2)).date()
 
     for i in range(3):
@@ -660,13 +674,16 @@ def calcular_horizonte(
     vf_total = float((valor_mensal * (tr_end / tr_at)).sum())
     lucro_total = vf_total - investido
 
-    # ✅ Decomposição: preço vs proventos (mantendo o mesmo fluxo de aportes)
     pr_end = float(df_full.loc[data_ref, "Price_Fact"])
     pr_at = df_full.loc[datas_aporte, "Price_Fact"].astype(float)
     vf_preco = float((valor_mensal * (pr_end / pr_at)).sum())
 
     lucro_preco = vf_preco - investido
-    lucro_proventos = vf_total - vf_preco  # efeito total dos proventos (reinvestidos)
+    lucro_proventos = vf_total - vf_preco
+
+    # ✅ Novo: quantidade de ações no final do período do card
+    close_end = float(df_full.loc[data_ref, "Close"])
+    qtd_acoes = (vf_total / close_end) if (close_end > 0 and np.isfinite(close_end)) else None
 
     v_rf = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_rf, data_ref) if (s_rf is not None and not s_rf.empty) else None
     v_ipca = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_ipca, data_ref) if (s_ipca is not None and not s_ipca.empty) else None
@@ -680,6 +697,7 @@ def calcular_horizonte(
         "lucro": lucro_total,
         "lucro_proventos": lucro_proventos,
         "lucro_preco": lucro_preco,
+        "qtd_acoes": qtd_acoes,
         "v_rf": v_rf,
         "v_ipca": v_ipca,
         "v_ibov": v_ibov,
@@ -823,7 +841,7 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# Cache local (somente se existir requests_cache) — sem mensagens de “indisponível”
+# Cache local (somente se existir requests_cache)
 if REQUESTS_CACHE_AVAILABLE:
     st.sidebar.subheader("Performance")
     usar_cache_local = st.sidebar.checkbox("Ativar cache local (recomendado)", value=True, key="usar_cache_local")
@@ -833,9 +851,8 @@ else:
     _set_bcb_session(False)
 
 hoje = date.today()
-
-# ✅ Ajuste: início não pode ser hoje (porque fim precisa ser > início e fim máximo é hoje)
 max_inicio = hoje - timedelta(days=1)
+
 d_fim_padrao = hoje - timedelta(days=1)
 if d_fim_padrao < MIN_DATA_BANCO:
     d_fim_padrao = MIN_DATA_BANCO + timedelta(days=1)
@@ -888,13 +905,10 @@ else:
         unsafe_allow_html=True,
     )
 
-# ✅ Mantivemos o formulário (form = executa tudo só quando clicar no botão)
 with st.sidebar.form("form_simulador"):
     valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
     st.subheader("Período da Simulação")
-
-    # ✅ Ajuste: mínimo é o início do banco (MIN_DATA_BANCO)
     data_inicio = st.date_input(
         "Início",
         d_ini_padrao,
@@ -903,7 +917,6 @@ with st.sidebar.form("form_simulador"):
         format="DD/MM/YYYY",
     )
 
-    # ✅ Ajuste: fim sempre > início (pelo próprio seletor) + mantém min do banco
     min_fim = max(MIN_DATA_BANCO, data_inicio + timedelta(days=1))
     data_fim = st.date_input(
         "Fim",
@@ -951,8 +964,6 @@ if btn_analisar:
     if not ticker_input:
         st.error("Digite um ticker válido no menu lateral.")
         st.stop()
-
-    # ✅ Garantia extra (além do seletor)
     if data_inicio >= data_fim:
         st.error("A data de **Fim** deve ser posterior à data de **Início**.")
         st.stop()
@@ -1010,12 +1021,10 @@ if not st.session_state.get("analysis_ready", False):
 Nossa ferramenta foi criada para comparar ativos com rigor, considerando aportes mensais e tratando corretamente eventos corporativos (split/bonificação/grupamento), que são exatamente onde muitos simuladores erram.<br>
 <b>Resultado:</b> você não recebe só um valor final. Você entende o que gerou o retorno — preço, proventos e o efeito do tempo.
 </div>
-
 <div class="warn-box">
 ⏳ <b>A primeira consulta pode demorar um pouco</b>, porque precisamos coletar e preparar os dados.<br>
 {dica_cache}
 </div>
-
 <div style="font-size:0.95rem; color:#0f172a; margin-top:10px;">
 🙂 Para começar, siga as instruções na <b>barra da esquerda</b>.
 </div>
@@ -1135,7 +1144,7 @@ st.plotly_chart(fig, use_container_width=True)
 # CARDS
 # -------------------------
 st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
-st.caption("🔁 O 1º card é o **período selecionado (dinâmico)**. Os demais são **horizontes fixos** (10/5/1 anos).")
+st.caption("🔁 1º card = período selecionado (dinâmico). Outros = horizontes fixos (10/5 anos).")
 
 def render_card_html(
     titulo_col: str,
@@ -1144,6 +1153,7 @@ def render_card_html(
     lucro: float | None,
     lucro_proventos: float | None,
     lucro_preco: float | None,
+    qtd_acoes: float | None,
     v_rf: float | None,
     v_ipca: float | None,
     v_ibov: float | None,
@@ -1155,7 +1165,6 @@ def render_card_html(
     badge_html: str | None = None,
     mostrar_tudo_bench: bool = False,
 ) -> str:
-    # ⚠️ Sem linhas em branco dentro do bloco (evita bug do Streamlit/Markdown)
     if vf is None or vi is None or lucro is None or inicio_eff is None or data_ref is None or n_aportes is None:
         return "\n".join([
             '<div class="total-card">',
@@ -1202,13 +1211,21 @@ def render_card_html(
     inicio_eff_str = inicio_eff.date().strftime("%d/%m/%Y")
     data_ref_str = data_ref.date().strftime("%d/%m/%Y")
 
+    qtd_txt = "—" if (qtd_acoes is None or not np.isfinite(float(qtd_acoes))) else formata_qtd(float(qtd_acoes))
+
     parts = []
     parts.append('<div class="total-card">')
-    parts.append(f'  <div class="total-label">{titulo_col}</div>')
+
+    # ✅ Badge acima do “Total em X anos”
     if badge_html:
         parts.append(f'  {badge_html}')
+
+    parts.append(f'  <div class="total-label">{titulo_col}</div>')
+
+    # ✅ Complemento (meses/dias) logo abaixo do “Total em X anos”
     if sub_label:
         parts.append(f'  <div class="total-sub-label">{sub_label}</div>')
+
     parts.append(f'  <div class="total-amount">{formata_br(vf)}</div>')
     parts.append('</div>')
 
@@ -1219,23 +1236,16 @@ def render_card_html(
         f'📈 <b>Rendimento nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)</div>'
     )
 
-    # ✅ Ajuste: proventos discreto (sem negrito e sem cor especial)
-    if prov_val is None:
-        parts.append('  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 6px;">Rendimento derivado de proventos: <span style="color: #475569; font-weight: 600;">—</span></div>')
+    # ✅ Agora: linhas pequenas e “discretas”
+    if prov_val is not None:
+        parts.append(f'  <div class="sub-note">Proventos: <span class="v">{formata_br(prov_val)}</span> ({prov_pct:.2f}%)</div>')
     else:
-        parts.append(
-            f'  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 6px;">'
-            f'Rendimento derivado de proventos: <span style="color: #475569; font-weight: 600;">{formata_br(prov_val)}</span> ({prov_pct:.2f}%)</div>'
-        )
+        parts.append('  <div class="sub-note">Proventos: <span class="v">—</span></div>')
 
-    # ✅ Novo: preço discreto logo abaixo
-    if preco_val is None:
-        parts.append('  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 12px;">Rendimento derivado do preço: <span style="color: #475569; font-weight: 600;">—</span></div>')
+    if preco_val is not None:
+        parts.append(f'  <div class="sub-note">Preço: <span class="v">{formata_br(preco_val)}</span> ({preco_pct:.2f}%)</div>')
     else:
-        parts.append(
-            f'  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 12px;">'
-            f'Rendimento derivado do preço: <span style="color: #475569; font-weight: 600;">{formata_br(preco_val)}</span> ({preco_pct:.2f}%)</div>'
-        )
+        parts.append('  <div class="sub-note" style="margin-bottom: 10px;">Preço: <span class="v">—</span></div>')
 
     parts.append('  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">')
     parts.append('  <div class="card-header">Benchmarks (Valor Corrigido)</div>')
@@ -1245,11 +1255,13 @@ def render_card_html(
     parts.append(f'  <div class="card-item">📅 <b>Início efetivo:</b> {inicio_eff_str}</div>')
     parts.append(f'  <div class="card-item">📍 <b>Data final usada no cálculo:</b> {data_ref_str}</div>')
     parts.append(f'  <div class="card-item">🗓️ <b>Nº de aportes:</b> {n_aportes}</div>')
+    parts.append(f'  <div class="card-item">📦 <b>Qtd. de ações:</b> {qtd_txt}</div>')
     parts.append('</div>')
 
     return "\n".join(parts)
 
-cols = st.columns(4)
+# ✅ Removido o “Total em 1 ano” => agora são 3 cards
+cols = st.columns(3)
 
 dt_ini_eff = proximo_pregao_a_partir(df_acao.index, dt_ini_user)
 if dt_ini_eff is None:
@@ -1274,6 +1286,7 @@ with cols[0]:
                 titulo_col="Total no período",
                 vf=None, vi=None, lucro=None,
                 lucro_proventos=None, lucro_preco=None,
+                qtd_acoes=None,
                 v_rf=None, v_ipca=None, v_ibov=None,
                 nome_rf_local=nome_rf,
                 inicio_eff=None, data_ref=None,
@@ -1296,6 +1309,7 @@ with cols[0]:
                 lucro=res_periodo["lucro"],
                 lucro_proventos=res_periodo["lucro_proventos"],
                 lucro_preco=res_periodo["lucro_preco"],
+                qtd_acoes=res_periodo["qtd_acoes"],
                 v_rf=res_periodo["v_rf"],
                 v_ipca=res_periodo["v_ipca"],
                 v_ibov=res_periodo["v_ibov"],
@@ -1310,19 +1324,19 @@ with cols[0]:
             unsafe_allow_html=True,
         )
 
-# 2) CARDS 10 / 5 / 1 anos (fixos)
-horizontes = [10, 5, 1]
+# 2) CARDS fixos: 10 e 5 anos
+horizontes = [10, 5]
 for anos_h, col in zip(horizontes, cols[1:]):
     with col:
-        titulo_col = f"Total em {anos_h} anos" if anos_h > 1 else "Total em 1 ano"
+        titulo_col = f"Total em {anos_h} anos"
         dt_target = dt_ini_eff + pd.DateOffset(years=anos_h)
 
         if dt_target > dt_fim_user:
             st.markdown(
                 "\n".join([
                     '<div class="total-card">',
-                    f'  <div class="total-label">{titulo_col}</div>',
                     '  <div class="badge-fixo">Horizonte fixo</div>',
+                    f'  <div class="total-label">{titulo_col}</div>',
                     '  <div class="total-amount">—</div>',
                     '</div>',
                     '<div class="info-card" style="border-top: 1px solid #e2e8f0;">',
@@ -1352,6 +1366,7 @@ for anos_h, col in zip(horizontes, cols[1:]):
                 lucro=res["lucro"] if res else None,
                 lucro_proventos=res["lucro_proventos"] if res else None,
                 lucro_preco=res["lucro_preco"] if res else None,
+                qtd_acoes=res["qtd_acoes"] if res else None,
                 v_rf=res["v_rf"] if res else None,
                 v_ipca=res["v_ipca"] if res else None,
                 v_ibov=res["v_ibov"] if res else None,
@@ -1370,7 +1385,7 @@ for anos_h, col in zip(horizontes, cols[1:]):
 # GUIA
 # -------------------------
 st.markdown(
-    f"""
+    """
 <div class="glossario-container">
   <div class="glossario-title">Guia de Termos e Indicadores</div>
 
