@@ -274,7 +274,11 @@ st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>'
 DIAS_MES = 30
 DIAS_ANO = 365
 
-# Cores solicitadas
+# ✅ Ajuste: início real do “banco” suportado (evita datas irreais tipo 1900)
+# (banco = conjunto de dados que conseguimos puxar com consistência)
+MIN_DATA_BANCO = date(1990, 1, 1)
+
+# Cores
 COR_CDI = "#14532d"   # verde escuro
 COR_IPCA = "red"
 COR_IBOV = "orange"
@@ -656,11 +660,13 @@ def calcular_horizonte(
     vf_total = float((valor_mensal * (tr_end / tr_at)).sum())
     lucro_total = vf_total - investido
 
-    # ✅ Novo: decomposição do rendimento vindo de proventos
+    # ✅ Decomposição: preço vs proventos (mantendo o mesmo fluxo de aportes)
     pr_end = float(df_full.loc[data_ref, "Price_Fact"])
     pr_at = df_full.loc[datas_aporte, "Price_Fact"].astype(float)
     vf_preco = float((valor_mensal * (pr_end / pr_at)).sum())
-    lucro_proventos = vf_total - vf_preco  # diferença entre TR e preço puro
+
+    lucro_preco = vf_preco - investido
+    lucro_proventos = vf_total - vf_preco  # efeito total dos proventos (reinvestidos)
 
     v_rf = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_rf, data_ref) if (s_rf is not None and not s_rf.empty) else None
     v_ipca = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_ipca, data_ref) if (s_ipca is not None and not s_ipca.empty) else None
@@ -670,10 +676,10 @@ def calcular_horizonte(
         "data_ref": data_ref,
         "dt_inicio_eff": dt_inicio_eff,
         "vf": vf_total,
-        "vf_preco": vf_preco,
         "vi": investido,
         "lucro": lucro_total,
         "lucro_proventos": lucro_proventos,
+        "lucro_preco": lucro_preco,
         "v_rf": v_rf,
         "v_ipca": v_ipca,
         "v_ibov": v_ibov,
@@ -827,10 +833,16 @@ else:
     _set_bcb_session(False)
 
 hoje = date.today()
-d_fim_padrao = hoje - timedelta(days=1)
-d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
 
-min_date = date(1900, 1, 1)  # ✅ permite datas antigas
+# ✅ Ajuste: início não pode ser hoje (porque fim precisa ser > início e fim máximo é hoje)
+max_inicio = hoje - timedelta(days=1)
+d_fim_padrao = hoje - timedelta(days=1)
+if d_fim_padrao < MIN_DATA_BANCO:
+    d_fim_padrao = MIN_DATA_BANCO + timedelta(days=1)
+
+d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
+if d_ini_padrao < MIN_DATA_BANCO:
+    d_ini_padrao = MIN_DATA_BANCO
 
 st.sidebar.markdown(
     """
@@ -876,12 +888,30 @@ else:
         unsafe_allow_html=True,
     )
 
+# ✅ Mantivemos o formulário (form = executa tudo só quando clicar no botão)
 with st.sidebar.form("form_simulador"):
     valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
     st.subheader("Período da Simulação")
-    data_inicio = st.date_input("Início", d_ini_padrao, min_value=min_date, max_value=hoje, format="DD/MM/YYYY")
-    data_fim = st.date_input("Fim", d_fim_padrao, min_value=min_date, max_value=hoje, format="DD/MM/YYYY")
+
+    # ✅ Ajuste: mínimo é o início do banco (MIN_DATA_BANCO)
+    data_inicio = st.date_input(
+        "Início",
+        d_ini_padrao,
+        min_value=MIN_DATA_BANCO,
+        max_value=max_inicio,
+        format="DD/MM/YYYY",
+    )
+
+    # ✅ Ajuste: fim sempre > início (pelo próprio seletor) + mantém min do banco
+    min_fim = max(MIN_DATA_BANCO, data_inicio + timedelta(days=1))
+    data_fim = st.date_input(
+        "Fim",
+        d_fim_padrao,
+        min_value=min_fim,
+        max_value=hoje,
+        format="DD/MM/YYYY",
+    )
 
     btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
 
@@ -921,8 +951,10 @@ if btn_analisar:
     if not ticker_input:
         st.error("Digite um ticker válido no menu lateral.")
         st.stop()
+
+    # ✅ Garantia extra (além do seletor)
     if data_inicio >= data_fim:
-        st.error("A data de **Início** deve ser anterior à data de **Fim**.")
+        st.error("A data de **Fim** deve ser posterior à data de **Início**.")
         st.stop()
 
     with st.status("Preparando simulação...", expanded=True) as status:
@@ -1037,7 +1069,7 @@ if dt_ini_user < primeiro_dado_ativo:
 <div class="warn-box">
 ⚠️ Você escolheu <b>Início</b> em {dt_ini_user.date().strftime('%d/%m/%Y')}, mas o ativo só tem dados a partir de
 <b>{primeiro_dado_ativo.date().strftime('%d/%m/%Y')}</b>.<br>
-O gráfico ficará “em branco” antes dessa data. Nos cálculos, os aportes passam a contar a partir do <b>primeiro pregão disponível</b>.
+Nos cálculos, os aportes passam a contar a partir do <b>primeiro pregão disponível</b>.
 </div>
 """,
         unsafe_allow_html=True,
@@ -1111,6 +1143,7 @@ def render_card_html(
     vi: float | None,
     lucro: float | None,
     lucro_proventos: float | None,
+    lucro_preco: float | None,
     v_rf: float | None,
     v_ipca: float | None,
     v_ibov: float | None,
@@ -1139,6 +1172,9 @@ def render_card_html(
 
     prov_val = float(lucro_proventos) if lucro_proventos is not None else None
     prov_pct = (prov_val / vi) * 100 if (prov_val is not None and vi > 0) else None
+
+    preco_val = float(lucro_preco) if lucro_preco is not None else None
+    preco_pct = (preco_val / vi) * 100 if (preco_val is not None and vi > 0) else None
 
     cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"
 
@@ -1183,13 +1219,22 @@ def render_card_html(
         f'📈 <b>Rendimento nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)</div>'
     )
 
-    # ✅ Novo: rendimento derivado de proventos
+    # ✅ Ajuste: proventos discreto (sem negrito e sem cor especial)
     if prov_val is None:
-        parts.append('  <div class="card-item" style="font-size: 0.98rem; color: #b45309; font-weight: 800; margin-bottom: 12px;">💰 <b>Rendimento derivado de proventos:</b> —</div>')
+        parts.append('  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 6px;">Rendimento derivado de proventos: <span style="color: #475569; font-weight: 600;">—</span></div>')
     else:
         parts.append(
-            f'  <div class="card-item" style="font-size: 0.98rem; color: #b45309; font-weight: 800; margin-bottom: 12px;">'
-            f'💰 <b>Rendimento derivado de proventos:</b> {formata_br(prov_val)} ({prov_pct:.2f}%)</div>'
+            f'  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 6px;">'
+            f'Rendimento derivado de proventos: <span style="color: #475569; font-weight: 600;">{formata_br(prov_val)}</span> ({prov_pct:.2f}%)</div>'
+        )
+
+    # ✅ Novo: preço discreto logo abaixo
+    if preco_val is None:
+        parts.append('  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 12px;">Rendimento derivado do preço: <span style="color: #475569; font-weight: 600;">—</span></div>')
+    else:
+        parts.append(
+            f'  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 12px;">'
+            f'Rendimento derivado do preço: <span style="color: #475569; font-weight: 600;">{formata_br(preco_val)}</span> ({preco_pct:.2f}%)</div>'
         )
 
     parts.append('  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">')
@@ -1228,7 +1273,7 @@ with cols[0]:
             render_card_html(
                 titulo_col="Total no período",
                 vf=None, vi=None, lucro=None,
-                lucro_proventos=None,
+                lucro_proventos=None, lucro_preco=None,
                 v_rf=None, v_ipca=None, v_ibov=None,
                 nome_rf_local=nome_rf,
                 inicio_eff=None, data_ref=None,
@@ -1250,6 +1295,7 @@ with cols[0]:
                 vi=res_periodo["vi"],
                 lucro=res_periodo["lucro"],
                 lucro_proventos=res_periodo["lucro_proventos"],
+                lucro_preco=res_periodo["lucro_preco"],
                 v_rf=res_periodo["v_rf"],
                 v_ipca=res_periodo["v_ipca"],
                 v_ibov=res_periodo["v_ibov"],
@@ -1305,6 +1351,7 @@ for anos_h, col in zip(horizontes, cols[1:]):
                 vi=res["vi"] if res else None,
                 lucro=res["lucro"] if res else None,
                 lucro_proventos=res["lucro_proventos"] if res else None,
+                lucro_preco=res["lucro_preco"] if res else None,
                 v_rf=res["v_rf"] if res else None,
                 v_ipca=res["v_ipca"] if res else None,
                 v_ibov=res["v_ibov"] if res else None,
