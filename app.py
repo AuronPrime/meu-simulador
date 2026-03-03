@@ -8,11 +8,11 @@ import plotly.graph_objects as go
 from datetime import date, timedelta
 import time
 import calendar
-from pathlib import Path
 
 # =========================================================
-# 0) (OPCIONAL) CACHE HTTP LOCAL EM DISCO (requests_cache)
+# 0) CACHE LOCAL (DISCO) PARA BCB (OPCIONAL)
 # =========================================================
+# (cache local = guardar respostas no computador/servidor para acelerar próximas consultas)
 REQUESTS_CACHE_AVAILABLE = False
 try:
     import requests_cache  # type: ignore
@@ -21,34 +21,25 @@ except Exception:
     requests_cache = None
     REQUESTS_CACHE_AVAILABLE = False
 
-def setup_requests_cache(enable: bool) -> None:
-    """Cache HTTP em disco (SQLite) para reduzir latência/instabilidade.
-    Seguro: se não existir lib/erro de IO, ignora sem quebrar app."""
-    if not REQUESTS_CACHE_AVAILABLE:
-        return
-    try:
-        if not enable:
-            try:
-                requests_cache.uninstall_cache()
-            except Exception:
-                pass
+_BCB_SESSION = requests.Session()
+
+def _set_bcb_session(use_cache: bool) -> None:
+    """Define sessão HTTP para BCB. Se requests_cache existir e estiver ativo,
+    usa cache em disco; senão usa requests normal."""
+    global _BCB_SESSION
+    if use_cache and REQUESTS_CACHE_AVAILABLE:
+        try:
+            _BCB_SESSION = requests_cache.CachedSession(
+                cache_name="bcb_sgs_cache",
+                backend="sqlite",
+                expire_after=timedelta(hours=12),
+                stale_if_error=True,
+            )
             return
-
-        cache_dir = Path(".cache")
-        cache_dir.mkdir(exist_ok=True)
-        cache_path = cache_dir / "http_cache"
-
-        # Expiração moderada: acelera bastante e não "congela" dados por muito tempo.
-        requests_cache.install_cache(
-            cache_name=str(cache_path),
-            backend="sqlite",
-            expire_after=timedelta(hours=3),
-            allowable_methods=("GET",),
-            stale_if_error=True,
-        )
-    except Exception:
-        # nunca deixar o cache derrubar o app
-        return
+        except Exception:
+            _BCB_SESSION = requests.Session()
+    else:
+        _BCB_SESSION = requests.Session()
 
 # =========================================================
 # 1) CONFIGURAÇÃO DA PÁGINA
@@ -149,7 +140,7 @@ st.markdown(
         font-size: 1.55rem;
         font-weight: 900;
         color: #0f172a;
-        margin: 22px 0 10px 0;
+        margin: 22px 0 6px 0;
         letter-spacing: -0.01em;
     }
 
@@ -159,7 +150,7 @@ st.markdown(
         background-color: #e8f0fe;
         padding: 18px;
         border-radius: 10px;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
         border-left: 5px solid #1f77b4;
         line-height: 1.6;
     }
@@ -187,6 +178,29 @@ st.markdown(
     .total-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; }
     .total-sub-label { font-size: 0.72rem; font-weight: 700; color: #475569; margin-top: 2px; }
     .total-amount { font-size: 1.6rem; font-weight: 800; color: #1f77b4; }
+
+    .badge-dinamico {
+        display:inline-block;
+        font-size:0.70rem;
+        font-weight: 900;
+        color:#0369a1;
+        background:#e0f2fe;
+        border:1px solid #7dd3fc;
+        padding: 3px 8px;
+        border-radius: 999px;
+        margin: 0 auto 6px auto;
+    }
+    .badge-fixo {
+        display:inline-block;
+        font-size:0.70rem;
+        font-weight: 900;
+        color:#475569;
+        background:#f1f5f9;
+        border:1px solid #e2e8f0;
+        padding: 3px 8px;
+        border-radius: 999px;
+        margin: 0 auto 6px auto;
+    }
 
     .info-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; padding: 18px; border-radius: 0 0 12px 12px; margin-bottom: 15px; }
     .card-header { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 10px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
@@ -254,25 +268,23 @@ def formata_br(valor: float) -> str:
 st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
 # =========================================================
-# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO
+# 2) FUNÇÕES DE SUPORTE E PROJEÇÃO (Benchmarks + Datas)
 # =========================================================
 
 DIAS_MES = 30
 DIAS_ANO = 365
 
 # Cores solicitadas
-COR_CDI = "#166534"   # verde escuro
+COR_CDI = "#14532d"   # verde escuro
 COR_IPCA = "red"
 COR_IBOV = "orange"
 
 def decompor_periodo_anos_meses_dias(dt_ini: pd.Timestamp, dt_fim: pd.Timestamp) -> tuple[int, int, int]:
-    """Decompõe um intervalo em anos/meses/dias com mês=30 dias e ano=365 dias."""
     dt_ini = pd.to_datetime(dt_ini).normalize()
     dt_fim = pd.to_datetime(dt_fim).normalize()
     total_days = int((dt_fim - dt_ini).days)
     if total_days < 0:
         total_days = 0
-
     anos = total_days // DIAS_ANO
     rem = total_days % DIAS_ANO
     meses = rem // DIAS_MES
@@ -289,12 +301,10 @@ def titulo_periodo_dinamico(anos: int, meses: int, dias: int) -> tuple[str, str 
         titulo = "Total em 1 ano" if anos == 1 else f"Total em {anos} anos"
         sub = formatar_meses_dias(meses, dias)
         return titulo, sub
-
     if meses >= 1:
         titulo = "Total em 1 mês" if meses == 1 else f"Total em {meses} meses"
         sub = f"{dias} {'dia' if dias == 1 else 'dias'}"
         return titulo, sub
-
     titulo = "Total em 1 dia" if dias == 1 else f"Total em {dias} dias"
     return titulo, None
 
@@ -304,7 +314,7 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30)
     params = {"formato": "json", "dataInicial": s, "dataFinal": e}
     headers = {"User-Agent": "Mozilla/5.0"}
 
-    r = requests.get(url, params=params, headers=headers, timeout=timeout)
+    r = _BCB_SESSION.get(url, params=params, headers=headers, timeout=timeout)
     if r.status_code != 200:
         raise RuntimeError(f"BCB/SGS HTTP {r.status_code}")
 
@@ -374,7 +384,6 @@ def _inicio_buffer_rf(d_inicio: date) -> date:
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
     d0 = _inicio_buffer_rf(d_inicio)
-
     s_cdi = busca_indice_bcb(12, d0, d_fim)
     if s_cdi is not None and not s_cdi.empty:
         return s_cdi, "CDI"
@@ -475,7 +484,6 @@ def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
 def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFrame | None:
     if not t:
         return None
-
     t_sa = t if ".SA" in t else t + ".SA"
 
     start = (pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=10)).date()
@@ -492,13 +500,10 @@ def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFram
             interval="1d",
             threads=False,
         )
-
         if df is None or df.empty:
             return None
-
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-
         if getattr(df.index, "tz", None) is not None:
             df.index = df.index.tz_localize(None)
 
@@ -527,8 +532,7 @@ def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFram
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
-    """Ibovespa como série de nível (Close). Buffer extra para evitar 'None' no 1º aporte
-    quando o dia do aporte cai em feriado (ex.: Carnaval) e o índice não tem valor naquele dia."""
+    """Buffer extra para evitar gaps e aumentar chance de benchmark não virar None."""
     start = max(pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=90), pd.Timestamp("1990-01-01"))
     end = (pd.Timestamp(d_fim).normalize() + pd.Timedelta(days=2)).date()
 
@@ -615,11 +619,9 @@ def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.Dateti
     end = s.asof(data_ref)
     if pd.isna(end):
         return None
-
     at = s.reindex(datas_aporte, method="ffill")
     if at.isna().any():
         return None
-
     return float((valor_mensal * (float(end) / at)).sum())
 
 def calcular_horizonte(
@@ -651,9 +653,14 @@ def calcular_horizonte(
 
     tr_end = float(df_full.loc[data_ref, "Total_Fact"])
     tr_at = df_full.loc[datas_aporte, "Total_Fact"].astype(float)
+    vf_total = float((valor_mensal * (tr_end / tr_at)).sum())
+    lucro_total = vf_total - investido
 
-    vf_ativo = float((valor_mensal * (tr_end / tr_at)).sum())
-    lucro = vf_ativo - investido
+    # ✅ Novo: decomposição do rendimento vindo de proventos
+    pr_end = float(df_full.loc[data_ref, "Price_Fact"])
+    pr_at = df_full.loc[datas_aporte, "Price_Fact"].astype(float)
+    vf_preco = float((valor_mensal * (pr_end / pr_at)).sum())
+    lucro_proventos = vf_total - vf_preco  # diferença entre TR e preço puro
 
     v_rf = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_rf, data_ref) if (s_rf is not None and not s_rf.empty) else None
     v_ipca = calc_valor_corrigido_por_indice(valor_mensal, datas_aporte, s_ipca, data_ref) if (s_ipca is not None and not s_ipca.empty) else None
@@ -662,9 +669,11 @@ def calcular_horizonte(
     return {
         "data_ref": data_ref,
         "dt_inicio_eff": dt_inicio_eff,
-        "vf": vf_ativo,
+        "vf": vf_total,
+        "vf_preco": vf_preco,
         "vi": investido,
-        "lucro": lucro,
+        "lucro": lucro_total,
+        "lucro_proventos": lucro_proventos,
         "v_rf": v_rf,
         "v_ipca": v_ipca,
         "v_ibov": v_ibov,
@@ -710,7 +719,6 @@ def add_benchmark_com_estimativa(
 
     cutoff = pd.to_datetime(last_official).normalize()
 
-    # se o trecho estimado não entra no range do gráfico, plota tudo sólido
     if cutoff >= dt_end:
         fig.add_trace(go.Scatter(x=y.index, y=y, name=nome, line=dict(color=cor, width=width)))
         return
@@ -809,18 +817,20 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# Performance: cache local (disco)
-st.sidebar.subheader("Performance")
+# Cache local (somente se existir requests_cache) — sem mensagens de “indisponível”
 if REQUESTS_CACHE_AVAILABLE:
+    st.sidebar.subheader("Performance")
     usar_cache_local = st.sidebar.checkbox("Ativar cache local (recomendado)", value=True, key="usar_cache_local")
-    setup_requests_cache(bool(usar_cache_local))
-    st.sidebar.caption("📌 O cache local acelera as próximas consultas e reduz instabilidade de rede.")
+    _set_bcb_session(bool(usar_cache_local))
+    st.sidebar.caption("📌 Cache local acelera consultas ao BCB e reduz instabilidade de rede.")
 else:
-    st.sidebar.caption("ℹ️ Cache local opcional indisponível (requests_cache não instalado).")
+    _set_bcb_session(False)
 
 hoje = date.today()
 d_fim_padrao = hoje - timedelta(days=1)
 d_ini_padrao = (pd.Timestamp(d_fim_padrao) - pd.DateOffset(years=10) - pd.Timedelta(days=1)).date()
+
+min_date = date(1900, 1, 1)  # ✅ permite datas antigas
 
 st.sidebar.markdown(
     """
@@ -870,8 +880,8 @@ with st.sidebar.form("form_simulador"):
     valor_aporte = st.number_input("Aporte mensal (R$)", min_value=0.0, value=1000.0, step=100.0)
 
     st.subheader("Período da Simulação")
-    data_inicio = st.date_input("Início", d_ini_padrao, format="DD/MM/YYYY")
-    data_fim = st.date_input("Fim", d_fim_padrao, format="DD/MM/YYYY", max_value=hoje)
+    data_inicio = st.date_input("Início", d_ini_padrao, min_value=min_date, max_value=hoje, format="DD/MM/YYYY")
+    data_fim = st.date_input("Fim", d_fim_padrao, min_value=min_date, max_value=hoje, format="DD/MM/YYYY")
 
     btn_analisar = st.form_submit_button("🔍 Analisar Patrimônio")
 
@@ -952,32 +962,30 @@ if btn_analisar:
     st.session_state["s_ipca"] = s_ipca
     st.session_state["s_ibov"] = s_ibov
 
-    # metas para saber onde começa a "estimativa" no gráfico
     st.session_state["rf_last_official"] = rf_last_official
     st.session_state["ipca_last_official"] = ipca_last_official
     st.session_state["ibov_last_official"] = ibov_last_official
 
 if not st.session_state.get("analysis_ready", False):
-    cache_msg = ""
+    dica_cache = ""
     if REQUESTS_CACHE_AVAILABLE:
-        cache_msg = "Recomendamos manter o <b>cache local</b> ativado na barra lateral para acelerar as próximas consultas."
-    else:
-        cache_msg = "O app já usa cache interno do Streamlit; em alguns ambientes, o cache local opcional pode não estar disponível."
+        dica_cache = "💡 Dica: ative o <b>cache local</b> (seção Performance) para acelerar as próximas consultas."
 
     st.markdown(
         f"""
 <div class="resumo-objetivo">
-👋 <b>Bem-vindo!</b><br>
-Este simulador calcula o acúmulo de patrimônio via <b>Retorno Total</b>, reinvestindo automaticamente os proventos disponíveis na base de dados (ex.: <b>dividendos</b> / <b>JCP</b>).<br><br>
-<b>Eventos corporativos considerados (quando disponíveis na fonte):</b> <b>dividendos</b>, <b>JCP</b>, <b>bonificações</b>, <b>splits</b>, <b>grupamentos</b> e demais efeitos financeiros registrados pelo provedor de dados.
-</div>
-<div style="font-size:0.95rem; color:#0f172a; margin-bottom:10px;">
-🙂 Para começar, siga as instruções conforme as orientações da <b>barra da esquerda</b>.
+<b>Simule investimentos com retorno total de verdade — sem “número bonito” que não fecha a conta.</b><br>
+Nossa ferramenta foi criada para comparar ativos com rigor, considerando aportes mensais e tratando corretamente eventos corporativos (split/bonificação/grupamento), que são exatamente onde muitos simuladores erram.<br>
+<b>Resultado:</b> você não recebe só um valor final. Você entende o que gerou o retorno — preço, proventos e o efeito do tempo.
 </div>
 
 <div class="warn-box">
-⏳ <b>Atenção:</b> a <b>primeira consulta</b> pode demorar um pouco mais porque o app precisa coletar e preparar os dados.<br>
-🚀 {cache_msg}
+⏳ <b>A primeira consulta pode demorar um pouco</b>, porque precisamos coletar e preparar os dados.<br>
+{dica_cache}
+</div>
+
+<div style="font-size:0.95rem; color:#0f172a; margin-top:10px;">
+🙂 Para começar, siga as instruções na <b>barra da esquerda</b>.
 </div>
 """,
         unsafe_allow_html=True,
@@ -1040,39 +1048,17 @@ O gráfico ficará “em branco” antes dessa data. Nos cálculos, os aportes p
 # -------------------------
 fig = go.Figure()
 
-# ✅ CDI/Selic: verde sólido (oficial) + verde tracejado (estim.)
 if mostrar_rf and (s_rf is not None) and (not s_rf.empty):
-    add_benchmark_com_estimativa(
-        fig=fig,
-        s_level=s_rf,
-        nome=nome_rf,
-        cor=COR_CDI,
-        dt_base=dt_base_chart,
-        dt_end=dt_end_chart,
-        last_official=rf_last_official,
-        width=2,
-    )
+    add_benchmark_com_estimativa(fig, s_rf, nome_rf, COR_CDI, dt_base_chart, dt_end_chart, rf_last_official, width=2)
 
-# ✅ IPCA: vermelho sólido (oficial) + vermelho tracejado (estim.)
 if mostrar_ipca and (s_ipca is not None) and (not s_ipca.empty):
-    add_benchmark_com_estimativa(
-        fig=fig,
-        s_level=s_ipca,
-        nome="IPCA",
-        cor=COR_IPCA,
-        dt_base=dt_base_chart,
-        dt_end=dt_end_chart,
-        last_official=ipca_last_official,
-        width=2,
-    )
+    add_benchmark_com_estimativa(fig, s_ipca, "IPCA", COR_IPCA, dt_base_chart, dt_end_chart, ipca_last_official, width=2)
 
-# Ibovespa: mantém sólido (mas agora com buffer, e não some nos cards)
 if mostrar_ibov and (s_ibov is not None) and (not s_ibov.empty):
     y_ibov = serie_pct_desde_base(s_ibov, dt_base_chart, dt_end_chart)
     if not y_ibov.empty:
         fig.add_trace(go.Scatter(x=y_ibov.index, y=y_ibov, name="Ibovespa", line=dict(color=COR_IBOV, width=2)))
 
-# Áreas + linha principal
 fig.add_trace(
     go.Scatter(
         x=df_v.index,
@@ -1117,12 +1103,14 @@ st.plotly_chart(fig, use_container_width=True)
 # CARDS
 # -------------------------
 st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
+st.caption("🔁 O 1º card é o **período selecionado (dinâmico)**. Os demais são **horizontes fixos** (10/5/1 anos).")
 
 def render_card_html(
     titulo_col: str,
     vf: float | None,
     vi: float | None,
     lucro: float | None,
+    lucro_proventos: float | None,
     v_rf: float | None,
     v_ipca: float | None,
     v_ibov: float | None,
@@ -1131,10 +1119,10 @@ def render_card_html(
     data_ref: pd.Timestamp | None,
     n_aportes: int | None,
     sub_label: str | None = None,
+    badge_html: str | None = None,
     mostrar_tudo_bench: bool = False,
 ) -> str:
-    """⚠️ Importante: construído SEM 'linha em branco' entre tags,
-    para evitar o bug de Markdown que fazia parte do HTML virar texto."""
+    # ⚠️ Sem linhas em branco dentro do bloco (evita bug do Streamlit/Markdown)
     if vf is None or vi is None or lucro is None or inicio_eff is None or data_ref is None or n_aportes is None:
         return "\n".join([
             '<div class="total-card">',
@@ -1148,8 +1136,11 @@ def render_card_html(
         ])
 
     rendimento_pct = (lucro / vi) * 100 if vi > 0 else 0.0
+
+    prov_val = float(lucro_proventos) if lucro_proventos is not None else None
+    prov_pct = (prov_val / vi) * 100 if (prov_val is not None and vi > 0) else None
+
     cor_rendimento = "#166534" if lucro >= 0 else "#b91c1c"
-    emoji_rendimento = "📈"
 
     bench_lines = []
 
@@ -1178,14 +1169,29 @@ def render_card_html(
     parts = []
     parts.append('<div class="total-card">')
     parts.append(f'  <div class="total-label">{titulo_col}</div>')
+    if badge_html:
+        parts.append(f'  {badge_html}')
     if sub_label:
         parts.append(f'  <div class="total-sub-label">{sub_label}</div>')
     parts.append(f'  <div class="total-amount">{formata_br(vf)}</div>')
     parts.append('</div>')
 
     parts.append('<div class="info-card">')
-    parts.append(f'  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investido:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>')
-    parts.append(f'  <div class="card-item" style="font-size: 1.00rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 12px;">{emoji_rendimento} <b>Rendimento Nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)</div>')
+    parts.append(f'  <div class="card-item" style="font-size: 1.00rem; margin-bottom: 8px;">💵 <b>Investimento:</b> <span style="color: #475569; font-weight: 600;">{formata_br(vi)}</span></div>')
+    parts.append(
+        f'  <div class="card-item" style="font-size: 1.00rem; color: {cor_rendimento}; font-weight: 800; margin-bottom: 6px;">'
+        f'📈 <b>Rendimento nominal:</b> {formata_br(lucro)} ({rendimento_pct:.2f}%)</div>'
+    )
+
+    # ✅ Novo: rendimento derivado de proventos
+    if prov_val is None:
+        parts.append('  <div class="card-item" style="font-size: 0.98rem; color: #b45309; font-weight: 800; margin-bottom: 12px;">💰 <b>Rendimento derivado de proventos:</b> —</div>')
+    else:
+        parts.append(
+            f'  <div class="card-item" style="font-size: 0.98rem; color: #b45309; font-weight: 800; margin-bottom: 12px;">'
+            f'💰 <b>Rendimento derivado de proventos:</b> {formata_br(prov_val)} ({prov_pct:.2f}%)</div>'
+        )
+
     parts.append('  <hr style="margin: 10px 0; border: 0; border-top: 1px solid #e2e8f0;">')
     parts.append('  <div class="card-header">Benchmarks (Valor Corrigido)</div>')
     parts.extend([f'  {ln}' for ln in bench_lines])
@@ -1205,7 +1211,7 @@ if dt_ini_eff is None:
     st.error("Não foi possível determinar o primeiro pregão disponível para o ativo.")
     st.stop()
 
-# 1) CARD do PERÍODO SELECIONADO (sempre com todas infos)
+# 1) CARD do PERÍODO SELECIONADO (dinâmico)
 with cols[0]:
     res_periodo = calcular_horizonte(
         df_full=df_acao,
@@ -1222,11 +1228,13 @@ with cols[0]:
             render_card_html(
                 titulo_col="Total no período",
                 vf=None, vi=None, lucro=None,
+                lucro_proventos=None,
                 v_rf=None, v_ipca=None, v_ibov=None,
                 nome_rf_local=nome_rf,
                 inicio_eff=None, data_ref=None,
                 n_aportes=None,
                 sub_label=None,
+                badge_html=None,
                 mostrar_tudo_bench=True,
             ),
             unsafe_allow_html=True,
@@ -1241,6 +1249,7 @@ with cols[0]:
                 vf=res_periodo["vf"],
                 vi=res_periodo["vi"],
                 lucro=res_periodo["lucro"],
+                lucro_proventos=res_periodo["lucro_proventos"],
                 v_rf=res_periodo["v_rf"],
                 v_ipca=res_periodo["v_ipca"],
                 v_ibov=res_periodo["v_ibov"],
@@ -1249,12 +1258,13 @@ with cols[0]:
                 data_ref=res_periodo["data_ref"],
                 n_aportes=res_periodo["n_aportes"],
                 sub_label=sub,
+                badge_html='<div class="badge-dinamico">Período selecionado (dinâmico)</div>',
                 mostrar_tudo_bench=True,
             ),
             unsafe_allow_html=True,
         )
 
-# 2) CARDS 10 / 5 / 1 anos (bug visual corrigido)
+# 2) CARDS 10 / 5 / 1 anos (fixos)
 horizontes = [10, 5, 1]
 for anos_h, col in zip(horizontes, cols[1:]):
     with col:
@@ -1266,6 +1276,7 @@ for anos_h, col in zip(horizontes, cols[1:]):
                 "\n".join([
                     '<div class="total-card">',
                     f'  <div class="total-label">{titulo_col}</div>',
+                    '  <div class="badge-fixo">Horizonte fixo</div>',
                     '  <div class="total-amount">—</div>',
                     '</div>',
                     '<div class="info-card" style="border-top: 1px solid #e2e8f0;">',
@@ -1293,6 +1304,7 @@ for anos_h, col in zip(horizontes, cols[1:]):
                 vf=res["vf"] if res else None,
                 vi=res["vi"] if res else None,
                 lucro=res["lucro"] if res else None,
+                lucro_proventos=res["lucro_proventos"] if res else None,
                 v_rf=res["v_rf"] if res else None,
                 v_ipca=res["v_ipca"] if res else None,
                 v_ibov=res["v_ibov"] if res else None,
@@ -1301,6 +1313,7 @@ for anos_h, col in zip(horizontes, cols[1:]):
                 data_ref=res["data_ref"] if res else None,
                 n_aportes=res["n_aportes"] if res else None,
                 sub_label=None,
+                badge_html='<div class="badge-fixo">Horizonte fixo</div>',
                 mostrar_tudo_bench=False,
             ),
             unsafe_allow_html=True,
@@ -1315,10 +1328,10 @@ st.markdown(
   <div class="glossario-title">Guia de Termos e Indicadores</div>
 
   <span class="glossario-termo">• Renda Fixa (CDI / Selic)</span>
-  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores faltantes/recentes são projetados com base na média composta dos últimos <b>6 meses</b> (fallback para 3).</span>
+  <span class="glossario-def">Referência de retorno para aplicações de baixo risco. O app tenta usar <b>CDI</b>; se a fonte falhar, usa a <b>Selic</b> como proxy. Valores faltantes/recentes são projetados com base na média composta dos últimos <b>6 meses</b> (fallback para 3). No gráfico, trecho estimado aparece como <b>tracejado</b>.</span>
 
   <span class="glossario-termo">• Correção IPCA (Inflação)</span>
-  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes (mês vigente ainda não consolidado) são estimadas usando a inflação média composta dos últimos <b>6 meses</b> (fallback para 3), com <b>mês=30 dias</b> para projeção. No gráfico, o trecho estimado aparece <b>tracejado</b>.</span>
+  <span class="glossario-def">Atualiza o valor investido para o poder de compra atual. Lacunas recentes (mês vigente ainda não consolidado) são estimadas usando a inflação média composta dos últimos <b>6 meses</b> (fallback para 3), com <b>mês=30 dias</b> para projeção. No gráfico, trecho estimado aparece como <b>tracejado</b>.</span>
 
   <span class="glossario-termo">• Ibovespa</span>
   <span class="glossario-def">Principal índice da bolsa brasileira, usado como referência de desempenho do mercado.</span>
