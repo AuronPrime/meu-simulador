@@ -23,6 +23,7 @@ except Exception:
 
 _BCB_SESSION = requests.Session()
 
+
 def _set_bcb_session(use_cache: bool) -> None:
     """Define sessão HTTP para BCB. Se requests_cache existir e estiver ativo,
     usa cache em disco; senão usa requests normal."""
@@ -40,6 +41,7 @@ def _set_bcb_session(use_cache: bool) -> None:
             _BCB_SESSION = requests.Session()
     else:
         _BCB_SESSION = requests.Session()
+
 
 # =========================================================
 # 1) CONFIGURAÇÃO DA PÁGINA
@@ -274,11 +276,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 def formata_br(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+
 def formata_int_br(n: int) -> str:
     return f"{int(n):,}".replace(",", ".")
+
 
 st.markdown('<div class="page-title">Simulador de Acúmulo de Patrimônio</div>', unsafe_allow_html=True)
 
@@ -293,9 +298,10 @@ DIAS_ANO = 365
 MIN_DATA_BANCO = date(1990, 1, 1)
 
 # Cores
-COR_CDI = "#14532d"   # verde escuro
+COR_CDI = "#14532d"  # verde escuro
 COR_IPCA = "red"
 COR_IBOV = "orange"
+
 
 def decompor_periodo_anos_meses_dias(dt_ini: pd.Timestamp, dt_fim: pd.Timestamp) -> tuple[int, int, int]:
     dt_ini = pd.to_datetime(dt_ini).normalize()
@@ -309,10 +315,12 @@ def decompor_periodo_anos_meses_dias(dt_ini: pd.Timestamp, dt_fim: pd.Timestamp)
     dias = rem % DIAS_MES
     return int(anos), int(meses), int(dias)
 
+
 def formatar_meses_dias(meses: int, dias: int) -> str:
     m_txt = "mês" if meses == 1 else "meses"
     d_txt = "dia" if dias == 1 else "dias"
     return f"{meses} {m_txt} e {dias} {d_txt}"
+
 
 def titulo_periodo_dinamico(anos: int, meses: int, dias: int) -> tuple[str, str | None]:
     if anos >= 1:
@@ -325,6 +333,7 @@ def titulo_periodo_dinamico(anos: int, meses: int, dias: int) -> tuple[str, str 
         return titulo, sub
     titulo = "Total em 1 dia" if dias == 1 else f"Total em {dias} dias"
     return titulo, None
+
 
 def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30) -> pd.DataFrame:
     s, e = d_inicio.strftime("%d/%m/%Y"), d_fim.strftime("%d/%m/%Y")
@@ -340,6 +349,7 @@ def _fetch_bcb_json(codigo: int, d_inicio: date, d_fim: date, timeout: int = 30)
     if df.empty:
         return pd.DataFrame(columns=["data", "valor"])
     return df
+
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
@@ -390,14 +400,17 @@ def busca_indice_bcb(codigo: int, d_inicio: date, d_fim: date) -> pd.Series:
     s = s[~s.index.duplicated(keep="last")]
     return (1.0 + s).cumprod()
 
+
 def _inicio_buffer_ipca(d_inicio: date) -> date:
     ts = pd.Timestamp(d_inicio).normalize()
     ts = ts.replace(day=1) - pd.DateOffset(months=2)
     return ts.date()
 
+
 def _inicio_buffer_rf(d_inicio: date) -> date:
     ts = pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=35)
     return ts.date()
+
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
@@ -412,10 +425,12 @@ def carregar_renda_fixa(d_inicio: date, d_fim: date) -> tuple[pd.Series, str]:
 
     return pd.Series(dtype="float64"), "Renda Fixa"
 
+
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def carregar_ipca(d_inicio: date, d_fim: date) -> pd.Series:
     d0 = _inicio_buffer_ipca(d_inicio)
     return busca_indice_bcb(433, d0, d_fim)
+
 
 def projetar_indice_ate_fim(
     s: pd.Series,
@@ -478,6 +493,7 @@ def projetar_indice_ate_fim(
     s_proj = pd.Series(vals, index=datas_faltantes)
     return pd.concat([s, s_proj])
 
+
 def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
     close = df["Close"].astype(float)
     prev = close.shift(1)
@@ -497,6 +513,7 @@ def _split_efetivo_para_evitar_degrau(df: pd.DataFrame) -> pd.Series:
         eff.loc[mask] = np.where(diff_unadj < diff_adj, split_raw[mask], 1.0)
 
     return eff
+
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFrame | None:
@@ -549,6 +566,7 @@ def carregar_dados_completos(t: str, d_inicio: date, d_fim: date) -> pd.DataFram
     except Exception:
         return None
 
+
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
     start = max(pd.Timestamp(d_inicio).normalize() - pd.Timedelta(days=90), pd.Timestamp(MIN_DATA_BANCO))
@@ -581,17 +599,20 @@ def carregar_ibov(d_inicio: date, d_fim: date) -> pd.Series:
 
     return pd.Series(dtype="float64")
 
+
 def ultimo_pregao_ate(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestamp | None:
     pos = df_index.get_indexer([dt], method="ffill")[0]
     if pos == -1:
         return None
     return df_index[pos]
 
+
 def proximo_pregao_a_partir(df_index: pd.Index, dt: pd.Timestamp) -> pd.Timestamp | None:
     pos = df_index.get_indexer([dt], method="bfill")[0]
     if pos == -1:
         return None
     return df_index[pos]
+
 
 def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fim_exclusivo: pd.Timestamp) -> pd.DatetimeIndex:
     if len(df_index) == 0:
@@ -630,6 +651,7 @@ def gerar_datas_aporte_mensal(df_index: pd.Index, dt_inicio: pd.Timestamp, dt_fi
         return pd.DatetimeIndex([])
     return pd.DatetimeIndex(datas_exec)
 
+
 def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.DatetimeIndex, serie_indice: pd.Series, data_ref: pd.Timestamp) -> float | None:
     if serie_indice is None or serie_indice.empty:
         return None
@@ -641,6 +663,7 @@ def calc_valor_corrigido_por_indice(valor_mensal: float, datas_aporte: pd.Dateti
     if at.isna().any():
         return None
     return float((valor_mensal * (float(end) / at)).sum())
+
 
 def _simular_acoes_inteiras(
     df_slice: pd.DataFrame,
@@ -693,7 +716,7 @@ def _simular_acoes_inteiras(
         if aporte_today:
             cash += valor_mensal
 
-        # 4) Compra (somente em dias em que entrou dinheiro: aporte, provento ou fração de split)
+        # 4) Compra somente em dias com “entrada” (aporte, provento ou fração de split)
         should_buy = aporte_today or (incluir_dividendos and div > 0) or (frac_cash > 0)
         if should_buy and cash >= close:
             n_buy = int(cash // close)
@@ -704,6 +727,7 @@ def _simular_acoes_inteiras(
     close_end = float(df_slice["Close"].iloc[-1])
     final_value = shares * close_end + cash
     return float(final_value), int(shares), float(cash)
+
 
 def calcular_horizonte(
     df_full: pd.DataFrame,
@@ -733,7 +757,10 @@ def calcular_horizonte(
 
     investido = float(len(datas_aporte) * valor_mensal)
 
-    df_slice = df_full.loc[(df_full.index >= dt_inicio_eff) & (df_full.index <= data_ref), ["Close", "Dividends", "Split_Eff"]].copy()
+    df_slice = df_full.loc[
+        (df_full.index >= dt_inicio_eff) & (df_full.index <= data_ref),
+        ["Close", "Dividends", "Split_Eff"],
+    ].copy()
     if df_slice.empty:
         return None
 
@@ -744,7 +771,7 @@ def calcular_horizonte(
         incluir_dividendos=True,
     )
 
-    vf_preco, shares_preco, cash_preco = _simular_acoes_inteiras(
+    vf_preco, _, _ = _simular_acoes_inteiras(
         df_slice=df_slice,
         datas_aporte=datas_aporte,
         valor_mensal=valor_mensal,
@@ -768,13 +795,14 @@ def calcular_horizonte(
         "lucro": lucro_total,
         "lucro_proventos": lucro_proventos,
         "lucro_preco": lucro_preco,
-        "qtd_acoes": shares_total,       # ✅ agora é inteiro (ações inteiras)
-        "caixa": cash_total,             # ✅ troco não investido
+        "qtd_acoes": shares_total,
+        "caixa": cash_total,
         "v_rf": v_rf,
         "v_ipca": v_ipca,
         "v_ibov": v_ibov,
         "n_aportes": int(len(datas_aporte)),
     }
+
 
 def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timestamp) -> pd.Series:
     if s is None or s.empty:
@@ -790,6 +818,7 @@ def serie_pct_desde_base(s: pd.Series, dt_base: pd.Timestamp, dt_end: pd.Timesta
     if s_plot.empty:
         return pd.Series(dtype="float64")
     return (s_plot / float(base) - 1.0) * 100.0
+
 
 def add_benchmark_com_estimativa(
     fig: go.Figure,
@@ -826,16 +855,17 @@ def add_benchmark_com_estimativa(
     if not y_est.empty:
         fig.add_trace(go.Scatter(x=y_est.index, y=y_est, name=f"{nome} (estim.)", line=dict(color=cor, width=width, dash="dash")))
 
+
 # =========================================================
 # ✅ UX: STATUS DO TICKER (nome comercial)
 # =========================================================
-
 def normaliza_ticker_usuario(t: str) -> tuple[str, str]:
     t = (t or "").upper().strip()
     if not t:
         return "", ""
     base = t[:-3] if t.endswith(".SA") else t
     return base, base + ".SA"
+
 
 TICKER_APELIDOS: dict[str, str] = {
     "BBAS3": "Banco do Brasil",
@@ -849,6 +879,7 @@ TICKER_APELIDOS: dict[str, str] = {
     "PETR4": "Petrobras",
     "VALE3": "Vale",
 }
+
 
 def _limpa_nome_yahoo(nome_raw: str) -> str:
     if not nome_raw:
@@ -865,12 +896,14 @@ def _limpa_nome_yahoo(nome_raw: str) -> str:
         title = title.replace(w, w.lower())
     return title.strip()
 
+
 def nome_comercial_para_ticker(base: str, nome_yahoo: str) -> str:
     base = (base or "").upper().strip()
     if base in TICKER_APELIDOS:
         return TICKER_APELIDOS[base]
     cleaned = _limpa_nome_yahoo(nome_yahoo)
     return cleaned if cleaned else base
+
 
 @st.cache_data(ttl=60 * 10, show_spinner=False)
 def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
@@ -892,10 +925,10 @@ def validar_ticker_yahoo(base: str) -> tuple[bool, str]:
     except Exception:
         return False, ""
 
+
 # =========================================================
 # 3) BARRA LATERAL
 # =========================================================
-
 st.sidebar.markdown(
     """
 <div class="instrucoes">
@@ -911,6 +944,7 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
+# Cache local (se existir requests_cache)
 if REQUESTS_CACHE_AVAILABLE:
     st.sidebar.subheader("Performance")
     usar_cache_local = st.sidebar.checkbox("Ativar cache local (recomendado)", value=True, key="usar_cache_local")
@@ -1015,7 +1049,6 @@ Desenvolvido por: <br>
 # =========================================================
 # 4) EXECUÇÃO CONTROLADA
 # =========================================================
-
 def _last_date_or_none(s: pd.Series) -> pd.Timestamp | None:
     if s is None:
         return None
@@ -1026,6 +1059,7 @@ def _last_date_or_none(s: pd.Series) -> pd.Timestamp | None:
         return pd.to_datetime(s2.index.max()).normalize()
     except Exception:
         return None
+
 
 if btn_analisar:
     ticker_input = base_ticker
@@ -1073,26 +1107,77 @@ if btn_analisar:
     st.session_state["nome_rf"] = nome_rf
     st.session_state["s_ipca"] = s_ipca
     st.session_state["s_ibov"] = s_ibov
-
     st.session_state["rf_last_official"] = rf_last_official
     st.session_state["ipca_last_official"] = ipca_last_official
     st.session_state["ibov_last_official"] = ibov_last_official
 
+# =========================================================
+# ✅ BEM-VINDO: TEXTO PEQUENO + "SAIBA MAIS" (EXPANDER) COM TEXTO GRANDE
+# =========================================================
 if not st.session_state.get("analysis_ready", False):
     dica_cache = ""
     if REQUESTS_CACHE_AVAILABLE:
-        dica_cache = "💡 Dica: ative o <b>cache local</b> (seção Performance) para acelerar as próximas consultas."
+        dica_cache = "💡 Dica: ative o <b>cache local</b> (guardar dados no computador/servidor) na seção <b>Performance</b> para acelerar as próximas consultas."
 
+    # ✅ TEXTO PEQUENO (bem-vindo)
+    st.markdown(
+        """
+<div class="resumo-objetivo">
+<b>Simule investimentos com retorno total real</b> (preço + dividendos/JCP reinvestidos), tratando corretamente <b>eventos corporativos</b> (split/bonificação/grupamento).<br>
+A simulação é <b>realista</b>: compra <b>apenas ações inteiras</b> (sem frações) e mantém o excedente em <b>caixa</b> (troco) — exatamente como acontece na prática.<br><br>
+<b>Diferencial:</b> você acompanha o <b>gráfico completo de evolução</b> no período escolhido, com detalhe no <b>hover</b> (quando passa o mouse). Ou seja: não é só o valor final — é o caminho do patrimônio, dia a dia.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # ✅ "Saiba mais..." clicável que revela o TEXTO GRANDE
+    with st.expander("Saiba mais e conheça os principais diferenciais"):
+        st.markdown(
+            """
+### Simule investimentos com retorno total de verdade — com metodologia realista e transparência total
+
+Muitos simuladores mostram um número final “bonito”, mas sem transparência do caminho — e, pior, com premissas que não existem na prática (como ações fracionadas ou eventos corporativos ignorados).
+
+Aqui a proposta é diferente: **rigor no cálculo + coerência operacional**.
+
+#### 1) Retorno total real (Total Return: preço + proventos)
+O retorno não é só “o preço subiu”. Ele considera:
+- **Valorização do preço**
+- **Proventos (dividendos/JCP)** com reinvestimento ao longo do tempo
+
+#### 2) Eventos corporativos tratados corretamente (Corporate Actions)
+A simulação trata eventos que costumam quebrar cálculos em muitos apps:
+- **Split**
+- **Bonificação**
+- **Grupamento**
+- e demais efeitos quando disponíveis na fonte de dados
+
+#### 3) Simulação realista: ações inteiras + caixa (troco)
+Este é um diferencial que “fecha a conta” como no mundo real:
+- o app compra **somente ações inteiras** (sem frações)
+- o que não dá para completar 1 ação fica em **caixa (troco)**
+- dividendos/JCP entram no caixa e são reinvestidos quando houver saldo suficiente para comprar novas ações inteiras
+
+#### 4) O gráfico mostra o caminho, não só o final
+Concorrentes geralmente mostram apenas um “acumulado final”.
+Aqui você vê a **evolução completa ao longo do tempo**, no período selecionado.
+
+E mais: o gráfico é **interativo**. Ao passar o mouse (**hover**), você enxerga com precisão:
+- o **retorno total** acumulado
+- o que veio de **valorização do preço**
+- o que veio de **proventos reinvestidos**
+- e ainda compara com **CDI**, **IPCA** e **Ibovespa** (quando ativados)
+
+Isso dá transparência real: você entende **quando** e **por que** o patrimônio evoluiu — não apenas “quanto deu no final”.
+
+> **Nota:** proventos e eventos corporativos são obtidos via Yahoo Finance (yfinance). Se a fonte omitir algum evento, ele não poderá ser refletido no resultado.
+"""
+        )
+
+    # Aviso de primeira consulta + instrução
     st.markdown(
         f"""
-<div class="resumo-objetivo">
-<b>Simule investimentos com retorno total de verdade — sem “número bonito” que não fecha a conta.</b><br>
-Nossa ferramenta foi criada para comparar ativos com rigor, considerando aportes mensais e tratando corretamente eventos corporativos (split/bonificação/grupamento), que são exatamente onde muitos simuladores erram.<br>
-<b>Resultado:</b> você não recebe só um valor final. Você entende o que gerou o retorno — preço, proventos e o efeito do tempo.<br><br>
-
-<b>Diferença importante (mais realista):</b> aqui a simulação é feita com <b>ações inteiras</b> (sem frações).<br>
-Ou seja: em cada aporte/provento, o app compra o <b>máximo de ações possível</b> no dia. O que não dá para completar 1 ação fica em <b>caixa (troco)</b> para a próxima compra.
-</div>
 <div class="warn-box">
 ⏳ <b>A primeira consulta pode demorar um pouco</b>, porque precisamos coletar e preparar os dados.<br>
 {dica_cache}
@@ -1108,7 +1193,6 @@ Ou seja: em cada aporte/provento, o app compra o <b>máximo de ações possível
 # =========================================================
 # 5) RENDERIZAÇÃO
 # =========================================================
-
 params = st.session_state["params"]
 ticker_exec = params["ticker"]
 valor_aporte_exec = float(params["aporte"])
@@ -1217,6 +1301,7 @@ st.plotly_chart(fig, use_container_width=True)
 # -------------------------
 st.markdown('<div class="section-title">Simulação de Patrimônio Acumulado</div>', unsafe_allow_html=True)
 st.caption("🔁 1º card = período selecionado (dinâmico). Outros = horizontes fixos (10/5 anos).")
+
 
 def render_card_html(
     titulo_col: str,
@@ -1332,6 +1417,7 @@ def render_card_html(
     parts.append('</div>')
 
     return "\n".join(parts)
+
 
 cols = st.columns(3)
 
