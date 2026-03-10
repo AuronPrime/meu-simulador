@@ -10,7 +10,7 @@ import time
 import calendar
 
 # =========================================================
-# 0) CACHE LOCAL (DISCO) PARA BCB (OPCIONAL)
+# 0) CACHE LOCAL (DISCO) PARA BCB (OPCIONAL) (atualização)
 # =========================================================
 # (cache local = guardar respostas no computador/servidor para acelerar próximas consultas)
 REQUESTS_CACHE_AVAILABLE = False
