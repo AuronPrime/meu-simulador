@@ -9,7 +9,6 @@ from datetime import date, timedelta
 import time
 import calendar
 
-===
 # =========================================================
 # 0) CACHE LOCAL (DISCO) PARA BCB (OPCIONAL) (atualização)
 # =========================================================
